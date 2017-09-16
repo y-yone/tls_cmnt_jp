@@ -1,0 +1,275 @@
+The Transport Layer Security (TLS) Protocol Version 1.3
+draft-ietf-tls-tls13-21
+
+私的翻訳版です。
+内容については意訳、超訳、誤りが多くあると思われますので、正確性について
+保証できません。
+意味が日本語で表現しにくい場合などは、カタカナでごまかしている箇所が多々
+あります。
+
+========================================================================
+Abstract
+
+   This document specifies version 1.3 of the Transport Layer Security
+   (TLS) protocol.  TLS allows client/server applications to communicate
+   over the Internet in a way that is designed to prevent eavesdropping,
+   tampering, and message forgery.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at http://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on January 4, 2018.
+
+Copyright Notice
+
+   Copyright (c) 2017 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents
+   (http://trustee.ietf.org/license-info) in effect on the date of
+   publication of this document.  Please review these documents
+   carefully, as they describe your rights and restrictions with respect
+   to this document.  Code Components extracted from this document must
+   include Simplified BSD License text as described in Section 4.e of
+   the Trust Legal Provisions and are provided without warranty as
+   described in the Simplified BSD License.
+
+   This document may contain material from IETF Documents or IETF
+   Contributions published or made publicly available before November
+   10, 2008.  The person(s) controlling the copyright in some of this
+   material may not have granted the IETF Trust the right to allow
+   modifications of such material outside the IETF Standards Process.
+   Without obtaining an adequate license from the person(s) controlling
+   the copyright in such materials, this document may not be modified
+   outside the IETF Standards Process, and derivative works of it may
+   not be created outside the IETF Standards Process, except to format
+   it for publication as an RFC or to translate it into languages other
+   than English.
+========================================================================
+
+1.  Introduction
+
+TLSの主な目的は、通信対象間とにセキュアなチャネルを提供することです。
+特に、以下の特性を提供します。
+
+
+ - 認証
+   サーバが常に認証されているものであること。また、クライアント側は任意
+   で認証を行うことができます。認証は非対称性の暗号方式(RSA,ECDSA,EdDSA)、
+   またはに事前共有鍵方式(PSK)によって行われます。
+
+ - 機密性
+   チャネル間でやり取りするデータは、エンドポイントにのみ読み取ることが
+   できます。TLSはデータ長を隠しませんが、TLSレコードにパディングを付与
+   することができ、解析者からデータ長を隠蔽することができます。
+
+ - 完全性
+   チャネル間を流れるデータは、攻撃者によって改竄されません。
+
+
+これらの特性は、攻撃者によって完全に掌握しているネットワーク下にあっても、
+保持されるべきです。
+
+
+
+TLSは2つの要素から構成されています。
+
+ - ハンドシェイクプロトコル(Section 4)
+   ハンドシェイクプロトコルは、通信者間の認証と、暗号方式のモードとパラメ
+   ータの折衝、共有鍵の確立を行います。
+   ハンドシェイクプロトコルは、攻撃者によって、通信者間で異なるパラメータ
+   をネゴシエーションされないように、耐タンパ性を持つように設計されていま
+   す。
+
+ - レコードプロトコル(Section 5)
+   レコードプロトコルは、ハンドシェイクプロトコルによって確立されたパラメ
+   ータを使い、ピアとの通信を行うために利用します。
+   レコードプロトコルによって、トラッフィックをレコードに分割し、それぞれ
+   を通信鍵によって独立して保護します。
+
+TLSはアプリケーションプロトコルとは独立しています。TLSの上に、上位レイヤー
+のプロトコルを透過的に利用することができます。しかし、TLSの標準では、プロ
+トコルに対してどのようにTLSを付与するかを指定していません。
+
+
+このドキュメントはTLS version 1.3を規定します。TLS 1.3は以前のバージョンと
+直接的な互換はありませんが、すべてのTLSバージョンのクライアントおよびサー
+バと相互にネゴシエーションを行えるメカニズムを有しています。
+
+このドキュメントをもって、TLS 1.2[RFC5246]を含む、以前のTLSのRFCを廃却し、
+置き換えます。TLSチケット[RFC5077]もまたSection 2.2で定義するものと置き換
+えられます。Section 4.2.6では[RFC4492]で規定した楕円曲線のネゴシエーション
+に関する規定を更新しています。TLS 1.3が[RFC5705]のキーマテリアルの導出方法
+を更新したため(Section 7.5)、これによりOCSPメッセージもまた[RFC6066]の規定
+を更新し、[RFC6961]を廃却することとなります(Section 4.4.2.1)。
+
+
+1.1. 用語について
+
+ここは割愛します。
+
+
+1.2. 変更履歴
+
+ draft-21
+  - 各チケットを別のPSKと関連付けるため、チケット毎のnonceを追加しました。
+  - クライアントがハンドシェイク鍵を使用してアラートを送信すべき理由を明記
+    しました。
+  - リキーイベント時のステートマシンを更新しました。
+  - 0-RTT及びリプレイについての議論を追加します。実装において、いくつかの
+    耐リプレイ攻撃のメカニズムを推奨します。
+
+ draft-20
+  - ハンドシェイク後の認証を行うため、"post_handshake_auth"拡張を追加しま
+    した。
+  - ひとつの圧縮ブロックに収めるため、HKDF-Expand-Labelを短いラベルにしま
+    した。
+  - RFC7250の方法を規定します。
+  - PSK時でもハンドシェイク後のクライアント認証を使えるようにします。
+    (以前の"禁止"は編集のミスになります)
+  - TLS 1.3では働かない、cert_typeとuser_mappingを削除しました。
+  - no_application_protocolアラートを追加しました。([RFC7301]より)
+  - トラフィック解析とサイドチャネル攻撃に関する議論を追加しました。
+
+ draft-19
+  - Exporters(Section 7.5)の入力で、Hash context_valueを使用します。
+　- Exportersに追加のDerive-Secretを加えます。
+  - HRR(HelloRetryRequest)の時に、ClientHello1のハッシュを利用します。この
+    変更によりクッキーを運搬する必要がなくなります。
+  - CertificateRequestを再構成し、selectorsをすべてextensionsへ入れます。
+    これによりクライアントはtrusted_ca_keysに代わって"certificate_authorit
+    ies"の拡張も定義できるようになります。
+  - レコードフレームの規定を厳格にし、チェックを要求するようにします。
+  - "ticket_early_data_info"と"early_data"を統合し、ひとつの拡張にまとめま
+    す。
+  - end_of_early_dataをハンドシェイクメッセージに変更します。
+  - キースケジュール(Section 7.1)に事前に展開するDerive-Scretを追加します。
+  - "pre_shared_key"の実装の擬似要求を削除しました。
+  - サーバからの"early_data"のロケーションを明記します。
+  - ピアの公開鍵の検証を必須にします。
+  - ステートマシン図を追加しました。
+
+ draft-18
+  - セッション再開時の、不要なresumption_pskを削除しました。 
+  - Extensionの表中のsignature_algorithmsを修正しました。
+
+  - ハンドシェイクのレジューム時、SNIが同じでないと、レジュームできないこと
+    を[RFC6066]より、再度定義しました。
+
+ draft-17
+  - 0-RTT Finishとresumption_contextを削除し、PSK自身のpsk_binderフィールド
+    に置き換えました。
+  - PSK鍵交換のネゴシエーションを再構成しました。
+  - TicketEarlyDataInfoにmax_early_data_sizeフィールドを追加しました。
+  - 0-RTT のexporterを追加し、通常ハンドシェイクのexporterを変更しました。
+  - TicketExtensionsをExtensionsにマージし、ticket_early_data_infoのコードポ
+    イントを変更しました。
+  - Client.key_sharesをHRRに置き換えました。
+  - 転送鍵の導出から、余計なラベルを削除しました。
+
+ draft-16
+書きかけ
+
+ draft-15
+
+ draft-14
+
+ draft-13
+
+ draft-12
+
+ draft-11
+
+ draft-10
+
+ draft-9
+
+ draft-8
+
+ draft-7
+
+ draft-6
+
+ draft-5
+
+ draft-4
+
+ draft-3
+
+ draft-2
+
+
+1.3. TLS 1.2からの主な変更点
+下記にTLS 1.2とTLS 1.3の主な機能の違いを記述します。しかし、これは違いを網羅
+しておらず、多くの小さな変更が存在します。
+
+ - 対称暗号のアルゴリズムは、すでにレガシーであると考えられるため、未サポート
+   としています。そのため、ADAD(認証付き暗号)のアルゴリズムのみが利用可能です。
+   暗号スイートは、認証・鍵交換のメカニズムと、レコードの保護とを分離するよう
+   に構想が変化しています。そして、ハッシュは鍵導出とHMACとして使われます。
+
+ - Zero-RTTモードが追加され、セキュアにアプリケーションデータをやり取りするま
+   でのラウンドトリップを短縮します。
+
+ - 静的なRSAおよびDiffie-Helmanの暗号スイートを削除します。すべての公開鍵は鍵
+   交換メカニズムで即時生成し、フォーワードシークレッシーを提供します。
+
+ - ServerHelloより後の、すべてのハンドシェイクメッセージを暗号化します。新しく
+   EncryptedExtensionを導入します。EncryptedExtensionはServerHelloの様々なexte
+   nsionsより先に送信することができ、機密性の高い保護が可能です。
+
+ - 鍵の導出関数について再設計されました。新しい設計では、鍵の特性を分離し、改
+   善したことで、暗号技術者による解析が容易になりました。
+   HMAC-based Extract-and-Expand Key Derivation Function(HKDF)は原始性を基底と
+   して使用されています。
+
+ - ハンドシェイクのステートマシンを大幅に再構成しました。またChangeCipherSpec
+   などの無駄なメッセージを削除しています。
+
+ - ed25519やed448などのECCは、基本構成として新しいsignature algorithmsに組み入
+   れられています。TLS 1.3では、座標のフォーマットのネゴシエーションはなくなり
+   単一のフォーマットになります。
+
+ - その他の暗号周りの改善を行っています。これには、圧縮やカスタムDHEグループ、
+   PSSへのRSAパディングの変更、DSAの削除を含んでいます。
+
+ - version list拡張によって、TLS 1.2でネゴシエーションする方式はあまり推奨され
+   ません。これは、サーバ側が選択するバージョンの実装の互換性の問題を増加させ
+   ます。
+
+ - サーバ側が古いTLSバージョンのPSKベースの暗号スイートを利用する、しないに関
+   わらず、セッションの再開では、新しいPSK方式に置き換えます。
+
+ - 参照するRFCを適切なものに更新します。
+
+
+1.4. TLS 1.2に影響する更新
+このドキュメントはTLS 1.2の実装に影響するいくつかの変更を定義しています。
+
+ - バージョンダウングレード保護機構をSection 4.1.3に記載しています。
+
+ - RSASSA-PSSをSection 4.2.3に規定しています。
+
+ - "supported_version"のClientHello拡張をレガシーバージョンのlientHelloより優
+   先して利用できるようにします。
+
+TLS 1.3の実装において、TLS 1.2の変更のサポートもまた必要かもしれません。各セク
+ションで詳細を参照してください。
+
+
+
+...続く
+
