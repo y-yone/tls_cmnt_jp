@@ -84,7 +84,6 @@ TLSの主な目的は、通信対象間とにセキュアなチャネルを提�
 保持されるべきです。
 
 
-
 TLSは2つの要素から構成されています。
 
  - ハンドシェイクプロトコル(Section 4)
@@ -150,8 +149,8 @@ TLSはアプリケーションプロトコルとは独立しています。TLS�
   - HRR(HelloRetryRequest)の時に、ClientHello1のハッシュを利用します。この
     変更によりクッキーを運搬する必要がなくなります。
   - CertificateRequestを再構成し、selectorsをすべてextensionsへ入れます。
-    これによりクライアントはtrusted_ca_keysに代わって"certificate_authorit
-    ies"の拡張も定義できるようになります。
+    これによりクライアントはtrusted_ca_keysに代わって"certificate_authorities"
+    の拡張も定義できるようになります。
   - レコードフレームの規定を厳格にし、チェックを要求するようにします。
   - "ticket_early_data_info"と"early_data"を統合し、ひとつの拡張にまとめま
     す。
@@ -165,7 +164,6 @@ TLSはアプリケーションプロトコルとは独立しています。TLS�
  draft-18
   - セッション再開時の、不要なresumption_pskを削除しました。 
   - Extensionの表中のsignature_algorithmsを修正しました。
-
   - ハンドシェイクのレジューム時、SNIが同じでないと、レジュームできないこと
     を[RFC6066]より、再度定義しました。
 
@@ -181,9 +179,20 @@ TLSはアプリケーションプロトコルとは独立しています。TLS�
   - 転送鍵の導出から、余計なラベルを削除しました。
 
  draft-16
-書きかけ
+ - バージョンのネゴシエーションを修正しました。
+ - RSASSA-PSSとEdDsaのSignatureSchemeのコードポイントを後方互換性を考慮したも
+   のに変更しました。
+ - HelloRetryRequest.selected_groupを拡張へ移動しました。
+ - exporter contextがない場合の振る舞いを、空のcontextと同じであることを明記
+   しました。
+ - KeyUpdataのフォーマットを新しくし、キースケジュールとは独立して更新できる
+   ように変更を行いました。
+ - certificate_requiredアラートを新規に設定しました。
+ - 0-RTTとPSK時のCertificateRequestを禁止しました。
+ - 0-RTT時のSNIのチェックを緩和しました。
 
  draft-15
+書きかけ
 
  draft-14
 
@@ -228,8 +237,8 @@ TLSはアプリケーションプロトコルとは独立しています。TLS�
    交換メカニズムで即時生成し、フォーワードシークレッシーを提供します。
 
  - ServerHelloより後の、すべてのハンドシェイクメッセージを暗号化します。新しく
-   EncryptedExtensionを導入します。EncryptedExtensionはServerHelloの様々なexte
-   nsionsより先に送信することができ、機密性の高い保護が可能です。
+   EncryptedExtensionを導入します。EncryptedExtensionはServerHelloの様々な
+   extensionsより先に送信することができ、機密性の高い保護が可能です。
 
  - 鍵の導出関数について再設計されました。新しい設計では、鍵の特性を分離し、改
    善したことで、暗号技術者による解析が容易になりました。
@@ -270,6 +279,143 @@ TLS 1.3の実装において、TLS 1.2の変更のサポートもまた必要か
 ションで詳細を参照してください。
 
 
+
+2. プロトコル概要
+セキュアチャネルで利用される暗号パラメータは、TLSハンドシェイクプロトコルによっ
+て提供されます。このTLSのサブプロトコルは、最初の通信時、クライアントとサーバに
+よって利用されます。ハンドシェイクプロトコルは、ピア間のプロトコルバージョンの
+ネゴシエーション、暗号アルゴリズムの選択、任意での互いの認証、そしてキーマテリ
+アルの共有を行います。一度ハンドシェイクが完了すると、ピア同士は確立した鍵を利
+用してアプリケーションレイヤーのトラフィックを保護します。
+
+ハンドシェイクや他のプロトコルエラーが発生した場合、任意でエラーアラートを送信
+して、接続を終了します。(Section 6)
+
+TLSは3つの基本的な鍵交換方式をサポートします。
+
+ - (EC)DHE (有限体または楕円曲線のDiffie-Hellman)
+ - PSK-only
+ - PSK with (EC)DHE
+
+図1にTLSフルハンドシェイクを示します。
+
+
+       Client                                               Server
+
+Key  ^ ClientHello
+Exch | + key_share*
+     | + signature_algorithms*
+     | + psk_key_exchange_modes*
+     v + pre_shared_key*         -------->
+                                                       ServerHello  ^ Key
+                                                      + key_share*  | Exch
+                                                 + pre_shared_key*  v
+                                             {EncryptedExtensions}  ^  Server
+                                             {CertificateRequest*}  v  Params
+                                                    {Certificate*}  ^
+                                              {CertificateVerify*}  | Auth
+                                                        {Finished}  v
+                                 <--------     [Application Data*]
+     ^ {Certificate*}
+Auth | {CertificateVerify*}
+     v {Finished}                -------->
+       [Application Data]        <------->      [Application Data]
+
+              +  前に書かれたメッセージの拡張として送信することを表し
+                 ます。
+
+              *  任意、または状況に応じてメッセージ/拡張を送信すること
+                 を表します。必ず送信するものではありません。
+
+              {} [sender]_handshake_traffic_secretによって暗号化された
+                 メッセージを表します。
+
+              [] [sender]_application_traffic_secret_Nによって暗号化さ
+                 メッセージを表します。
+
+               図 1: TLSフルハンドシェイクメッセージ
+
+
+ハンドシェイクは上記図の3つのフェーズからなります。
+
+ - 鍵交換
+   キーマテリアルの共有と暗号パラメータを決定します。このフェーズ以降、
+   すべてのメッセージは暗号化されます。
+
+ - サーバパラメータ
+   クライアント認証やアプリケーションレイヤープロトコルなど、他のハン
+   ドシェイクパラメータを決定します。
+
+ - 認証
+   サーバの認証、および任意でクライアントの認証と、鍵とハンドシェイク
+   の整合性の確認を行います。
+
+鍵交換のフェーズでは、クライアントはランダムのnonce(ClientHello.random)
+を含めたClientHelloメッセージ(Section 4.1.2)を送信します。これは、プロ
+トコルバージョン、暗号/HKDFハッシュのリスト、Diffie-Hellman鍵共有
+(Section 4.2.7の"key_share"拡張を参照)、事前共有鍵のラベル(Section 4.2.10
+の"pre_shared_key"の設定、追加の拡張情報などを通知します。
+
+サーバは、ClientHelloにより適切な暗号パラメータを決定します。その際に
+ネゴシエーションする接続パラメータをServerHello(Section 4.1.3)によって
+応答します。ClientHelloとServerHelloにより共有鍵を決定します。(EC)DHE鍵
+が利用される場合、サーバはServerHelloの"key_share"拡張に、クライアントが
+通知したグループと同じグループの一時Diffie-Hellman鍵を含めなければなりま
+せん[MUST]。PSKが利用される場合、サーバはServerHelloの"pre_shared_key"拡
+張でクライアントが要求したPSKが選択されたかを通知します。
+実装は両方の拡張が通知された場合、(EC)DHEとPSKを同時に使うことができます。
+
+サーバはサーバのパラメータの確立のため、2つのメッセージを送信します。
+
+ EncryptedExtensions
+ 特定の証明書に関連しない暗号パラメータを決定する必要がないClientHello拡
+ 張に応答します。
+ [Section 4.3.1]
+
+ CertificateRequest
+ もし、証明書を利用したクライアント認証が必要なら、CertificateRequestで要
+ 求するパラメータを通知します。このメッセージはクライアント認証が不要な場
+ 合は必要ありません。
+ [Section 4.3.2]
+
+最後にクライアントとサーバは認証メッセージを交換します。TLSは認証が必要な
+時は毎回、同じメッセージを設定します。
+
+ Certificate
+ エンドポイントの証明書と、すべての証明書の拡張に利用されます。このメッセ
+ ージは、証明書による認証が不要な場合はサーバによって、CertificateRequest
+ メッセージがない場合はクライアントによって不要とされ、利用されません。
+ もし生の公開鍵[RFC7250]やキャッシュ情報の拡張[RFC7924]が利用された場合、
+ このメッセージは証明書ではなく、サーバの長期の鍵と一致する値とが含まれま
+ す。
+ [Section 4.4.2]
+
+ CertificateVerify
+ ハンドシェイク全体のシグネチャを証明書の秘密鍵で暗号化したメッセージです。
+ このメッセージは、エンドポイントが証明書による認証を不要とした場合は、必
+ 要ありません
+ [Section 4.4.3]
+
+ Finished
+ ハンドシェイク全体のMAC(Message Authentication Code)です。このメッセージ
+ はエンドポイントの鍵交換によって生成された鍵の確認に利用します。PSKの場
+ 合はさらにハンドシェイクの認証にも利用します。
+ [Section 4.4.4]
+
+上記のサーバのメッセージを受信した場合、クライアントはCertificate、
+CertificateVerify、Finishに応じた、クライアント側の認証メッセージを送信し
+ます。
+
+これらのメッセージのポイントは、クライアントとサーバは認証された暗号を通し
+て、アプリケーションデータを保護するレコードレイヤーのキーマテリアルを導出
+し、ハンドシェイクを完了させなければならないことです。アプリケーションデー
+タはFinishメッセージよりも前に暗号化されたレコードレイヤーを送信してないけ
+ません[MUST NOT]。
+サーバは、クライアントの認証メッセージを受ける前にレコードレイヤーを送信し
+ますが、その時は認証されてないピアに送信することとなります。
+
+
+2.1. DHE鍵交換
 
 ...続く
 
