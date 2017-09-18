@@ -192,9 +192,21 @@ TLSはアプリケーションプロトコルとは独立しています。TLS�
  - 0-RTT時のSNIのチェックを緩和しました。
 
  draft-15
-書きかけ
-
+ - ベルリンで議論された、新しいネゴシエーション記法で記述しました。
+ - ハンドシェイク中はCertificateRequest.contextは空であることを要求するように
+   します。
+ - 空のチケットを禁止します。
+ - ネゴシエーション間で同じ暗号セットでのアプリケーションデータのメッセージを
+   禁止します。
+ - アラートのガイダンスを整理しました。
+ - TLS 1.2の必要性を整理しました。
+ - 0-RTTのタイムウィンドウのガイダンスを記載しました。
+ - 古いPRNG(擬似乱数生成)に関する記述を削除しました。
+ - 鍵の変更にまたがったハンドシェイクレコードのチェックを明示的に要求するよう
+   にしました。
+ 
  draft-14
+書きかけ
 
  draft-13
 
@@ -234,7 +246,7 @@ TLSはアプリケーションプロトコルとは独立しています。TLS�
    でのラウンドトリップを短縮します。
 
  - 静的なRSAおよびDiffie-Helmanの暗号スイートを削除します。すべての公開鍵は鍵
-   交換メカニズムで即時生成し、フォーワードシークレッシーを提供します。
+   交換メカニズムで即時生成し、Forward secrecyを提供します。
 
  - ServerHelloより後の、すべてのハンドシェイクメッセージを暗号化します。新しく
    EncryptedExtensionを導入します。EncryptedExtensionはServerHelloの様々な
@@ -415,7 +427,195 @@ CertificateVerify、Finishに応じた、クライアント側の認証メッセ
 ますが、その時は認証されてないピアに送信することとなります。
 
 
-2.1. DHE鍵交換
+2.1. DHE鍵共有の不一致について
+もし、クライアントが適当な"key_share"拡張を提供しない場合(つまり、サーバが
+サポートしているDHEまたはECDHEのグループしか送信しない場合)、サーバは図2で
+示すように、HelloRetryRequestにより、不一致を通知することで、クライアント
+が適切な"key_share"拡張により再度ハンドシェイクを行う必要があります。
+もし共通する暗号パラメータがない場合、サーバは適切なアラートによりハンドシ
+ェイクを破棄しなければなりません[MUST]。
+
+
+            Client                                               Server
+
+            ClientHello
+            + key_share             -------->
+                                    <--------         HelloRetryRequest
+                                                            + key_share
+
+            ClientHello
+            + key_share             -------->
+                                                            ServerHello
+                                                            + key_share
+                                                  {EncryptedExtensions}
+                                                  {CertificateRequest*}
+                                                         {Certificate*}
+                                                   {CertificateVerify*}
+                                                             {Finished}
+                                    <--------       [Application Data*]
+            {Certificate*}
+            {CertificateVerify*}
+            {Finished}              -------->
+            [Application Data]      <------->        [Application Data]
+
+                    図2: フルハンドシェイク時のパラメータの不一致
+
+注意:初回のClientHello/HelloRetryRequestを含む、ハンドシェイクの転写は新規の
+ClientHelloをリセットしません。
+
+以降のセクションに記載しますが、TLSは基本のハンドシェイクに、いくつかの
+最適化のための変形を行うことができます。
+
+
+2.2. セッションの再開と、事前鍵共有(PSK)
+TLSのPSKは、通信の外でも確立することができますが、以前の通信や、セッショ
+ンの再利用("session resumption")でも確立することができます。一度ハンドシ
+ェイクが完了すると、サーバはクライアントに、初回ハンドシェイクによって導
+出したユニークキーであるPSK IDを送信することができます。
+クライアントは以降のハンドシェイクにPSK IDを利用することができます。もし
+サーバがPSK IDを受け付けた場合、新しいコネクションのセキュリティコンテキ
+ストは、オリジナルのコネクションに紐付いた暗号と、初回のハンドシェイクと
+同じキー導出により、フルハンドシェイクに代わり自力で暗号状態を確立します。
+TLS 1.2やその前では、この機能は"session IDs"や"session tickets"[RFC5077]
+によって提供されていました。この2つのメカニズムはTLS 1.3では廃止されてい
+ます。
+
+PSKは、(EC)DHE鍵交換を利用したforward secrecyで共有されるものや、または
+forward secrecy性は喪失するが、単体で発行できるアプリケーションデータによ
+って共有されるものがある。
+
+図3は、PSKを通知する初回のネゴシエーションと、PSKを利用した2回目のネゴシ
+エーションを示します。
+
+
+          Client                                               Server
+
+   Initial Handshake:
+          ClientHello
+          + key_share               -------->
+                                                          ServerHello
+                                                          + key_share
+                                                {EncryptedExtensions}
+                                                {CertificateRequest*}
+                                                       {Certificate*}
+                                                 {CertificateVerify*}
+                                                           {Finished}
+                                    <--------     [Application Data*]
+          {Certificate*}
+          {CertificateVerify*}
+          {Finished}                -------->
+                                    <--------      [NewSessionTicket]
+          [Application Data]        <------->      [Application Data]
+
+
+   Subsequent Handshake:
+          ClientHello
+          + key_share*
+          + psk_key_exchange_modes
+          + pre_shared_key          -------->
+                                                          ServerHello
+                                                     + pre_shared_key
+                                                         + key_share*
+                                                {EncryptedExtensions}
+                                                           {Finished}
+                                    <--------     [Application Data*]
+          {Finished}                -------->
+          [Application Data]        <------->      [Application Data]
+
+                    図3: セッションレジュームとPSKのメッセージ
+
+サーバは、PSKによる認証が行われる場合、CertificateまたはCertificateVerify
+メッセージを送信しません。クライアントがPSKによるセッションのレジュームを
+要求するときは、必要であればクライアントはサーバがレジュームかフルハンド
+シェイクかを選択できるように"key_share"拡張を提供すべきです。サーバは、
+"pre_shared_key"拡張をつけて、PSKのネゴシエーションの応答することも、
+"key_share"拡張によりforward secrecyによる(EC)DHEでネゴシエーションするこ
+ともできます。
+
+PSKが通信の外で提供されている場合、PSK IDとKDFハッシュアルゴリズムもまた
+通信の外で提供されたものをPSKで利用しなければなりません[MUST]。
+注意: 通信外で提供された事前共有鍵を使う時は、[RFC4086]で述べられているよ
+うに、エントロピー的に十分な鍵を生成するようによく考慮するべきです。共有
+したパスワードや、他の低い情報量のソースから共有シークレットを導出するこ
+とはセキュアではありません。パスワードや低い情報量によるシークレットでは
+PSKに基づいた、辞書攻撃の対象となりえます。PSK認証は、Diffie-Hellman鍵交
+換を行っていたとしても、パスワード認証による鍵の認証が決して強固なもので
+はありません。
+
+2.3. Zero-RTTデータ
+クライアントとサーバが(外部または前のハンドシェイクによって得られた)PSK
+を共有している時、TLS 1.3はクライアントの初回送信("early data")でデータ
+を送ることができます。クライアントは、サーバの認証と、early dataの暗号化
+のためにPSKを利用します。
+
+クライアントが外部から得たPSKをearly dataの送信に利用する時は、以下の追
+加情報を提供しなければなりません[MUST]。
+
+ - PSKで利用するTLSのバージョン
+ - PSKで利用する暗号スイート
+ - 利用する場合は、Application-Layer Protocol Negotiation(ALPN)[RFC7301]。
+ - 利用する場合は、Server Name Indication(SNI)。
+
+図4に示すように、0-RTTデータは初回送信時に1-RTT時のハンドシェイクデータを
+追加したものです。その後のハンドシェイクはPSKレジュームによる1-RTTハンド
+シェイクと同様です。
+
+
+            Client                                               Server
+
+            ClientHello
+            + early_data
+            + key_share*
+            + psk_key_exchange_modes
+            + pre_shared_key
+            (Application Data*)     -------->
+                                                            ServerHello
+                                                       + pre_shared_key
+                                                           + key_share*
+                                                  {EncryptedExtensions}
+                                                          + early_data*
+                                                             {Finished}
+                                    <--------       [Application Data*]
+            (EndOfEarlyData)
+            {Finished}              -------->
+
+            [Application Data]      <------->        [Application Data]
+
+                  +  前に書かれたメッセージの拡張として送信することを表し
+                     ます。
+
+                  *  任意、または状況に応じてメッセージ/拡張を送信すること
+                     を表します。必ず送信するものではありません。
+
+                  () client_early_traffic_secretによって導出された鍵によっ
+                     て暗号化されたメッセージを表します。
+
+                  {} [sender]_handshake_traffic_secretによって暗号化された
+                     メッセージを表します。
+
+                  [] [sender]_application_traffic_secret_Nによって暗号化さ
+                     メッセージを表します。
+
+                       図4: 0ラウンドトリップハンドシェイク
+
+重要な注意:0-RTTデータは他のTLSのデータよりもセキュリティ特性が弱いです。
+           具体的には、下記のことに注意してください。
+
+ 1. このデータはPSKによって導出された鍵で暗号化しているだけのため、forward
+    secret特性を持っていません。
+ 2. コネクション間で再利用されないことは保証されていません。本来のTLS 1.3
+    の1-RTTデータはサーバランダム値によって、リプレイ攻撃への耐性を持って
+    いますが、0-RTTデータはServerHelloに依存しないためです。これは、クライ
+    アント認証や、アプリケーションプロトコルのデータに特に関連します。同じ
+    ことがearly_exporter_master_secretにも言えます。
+
+0-RTTデータはコネクション内で複製できません(つまりサーバは同じコネクション
+上での同一データを2度は受け付けません)。また攻撃者は1-RTTデータに0-RTTのデ
+ータを利用することはできません(別の鍵によって暗号化するため)。Appendix E.5
+に攻撃の可能性についての記述と、Section 8にリプライ攻撃に対抗するための上限
+を設けることについて記述しています。
+
+
 
 ...続く
 
