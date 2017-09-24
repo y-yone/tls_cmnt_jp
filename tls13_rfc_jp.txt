@@ -552,8 +552,8 @@ PSKに基づいた、辞書攻撃の対象となりえます。PSK認証は、Di
 クライアントが外部から得たPSKをearly dataの送信に利用する時は、以下の追
 加情報を提供しなければなりません[MUST]。
 
- - PSKで利用するTLSのバージョン
- - PSKで利用する暗号スイート
+ - PSKで利用するTLSのバージョン。
+ - PSKで利用する暗号スイート。
  - 利用する場合は、Application-Layer Protocol Negotiation(ALPN)[RFC7301]。
  - 利用する場合は、Server Name Indication(SNI)。
 
@@ -770,18 +770,18 @@ Section 3.1で記述したように、バイト(uint8)が固定長連結する�
 ような実行時の変数によって選択される構造は、表現時の記法の段階では決定
 されていません。
 
- struct {
-     T1 f1;
-     T2 f2;
-     ....
-     Tn fn;
-     select (E) {
-         case e1: Te1;
-         case e2: Te2;
-         ....
-         case en: Ten;
-     } [[fv]];
- } [[Tv]];
+    struct {
+        T1 f1;
+        T2 f2;
+        ....
+        Tn fn;
+        select (E) {
+            case e1: Te1;
+            case e2: Te2;
+            ....
+            case en: Ten;
+        } [[fv]];
+    } [[Tv]];
 
 例:
 
@@ -806,5 +806,376 @@ Section 3.1で記述したように、バイト(uint8)が固定長連結する�
     } VariantRecord;
 
 
-...続く
+4. ハンドシェイクプロトコル
+ハンドシェイクプロトコルは、コネクションのセキュリティパラメータをネ
+ゴシエーションするために使われます。ハンドシェイクメッセージは、コネ
+クションの状態により、1つ以上のカプセル化されたTLSPlaintextまたは、
+TLSCiphertextのTLSレコードレイヤーによって行われます。
+
+    enum {
+        client_hello(1),
+        server_hello(2),
+        new_session_ticket(4),
+        end_of_early_data(5),
+        hello_retry_request(6),
+        encrypted_extensions(8),
+        certificate(11),
+        certificate_request(13),
+        certificate_verify(15),
+        finished(20),
+        key_update(24),
+        message_hash(254),
+        (255)
+    } HandshakeType;
+
+    struct {
+        HandshakeType msg_type;    /* handshake type */
+        uint24 length;             /* bytes in message */
+        select (Handshake.msg_type) {
+            case client_hello:          ClientHello;
+            case server_hello:          ServerHello;
+            case end_of_early_data:     EndOfEarlyData;
+            case hello_retry_request:   HelloRetryRequest;
+            case encrypted_extensions:  EncryptedExtensions;
+            case certificate_request:   CertificateRequest;
+            case certificate:           Certificate;
+            case certificate_verify:    CertificateVerify;
+            case finished:              Finished;
+            case new_session_ticket:    NewSessionTicket;
+            case key_update:            KeyUpdate;
+        } body;
+    } Handshake;
+
+プロトコルメッセージは、Section 4.4.1で定義された、およびSection 2
+で示している順序で送信しなければあなりません[MUST]。通信相手から予
+期しない順序でハンドシェイクメッセージを受信した場合、
+"unexpected_message"のアラートを送信し、ハンドシェイクを破棄しなけ
+ればなりません[MUST]。
+
+
+4.1. 鍵交換メッセージ
+鍵交換メッセージは、後のハンドシェイクやデータを保護するためのトラ
+フィックキーを含めた、セキュリティパラメータを共有するため、クライ
+アントととサーバのセキュリティ能力の決定に利用されます。
+
+
+4.1.1. 暗号のネゴシエーション
+TLSでは、暗号のネゴシエーションは、ClientHelloの次の4つのオプショ
+ンの要求で、クライアントから開始されます。
+
+ - クライアントがサポートしている、AEADアルゴリズム/HKDFハッシュペ
+   アの暗号スイートのリスト。
+
+ - クライアントがサポートしている(EC)DHEグループを"supported_groups"
+   拡張(Section 4.2.6)と、このグループのための(EC)DHE共有の"key_share"
+   拡張(Section 4.2.7)。
+
+ - クライアントが受け入れ可能なシグネチャアルゴリズムを通知する、
+   "signature_algorithms"拡張(Section 4.2.3)。
+
+ - クライアントが知っている対称鍵のリストを含んだ"pre_shared_key"
+   拡張(Section 4.2.10)および、PSKを利用する鍵交換方式を通知する
+   "psk_key_exchange_modes"拡張(Section 4.2.8)。   
+
+サーバがPSKを選択しない場合、上の3つのオプションはそれぞれ独立して
+います。サーバは、暗号スイートと、鍵を確立するための(EC)DHEグループ
+と鍵共有のペアと、クライアントに自身の認証させるためのシグネチャア
+ルゴリズムと証明書のペアとを独立して選択することができます。
+もし、受信した"supported_groups"とサーバがサポートしているグループ
+とに一致するものがなかった場合は、サーバは"handshake_failure"か、
+"insufficient_security"アラートを送信してハンドシェイクを破棄しなけ
+ればなりません[MUST]。
+
+サーバがPSKを選択した場合、鍵を確立する方式も、クライアントから通知
+された"psk_key_exchange_modes"拡張(現状は、PSKのみか(EC)DHEを伴いま
+す)から選択する必要があります[MUST]。
+注意:(EC)DHEを伴わないPSKを使う場合、前の節での非PSKのケースとは異な
+り、"supported_groups"パラメータが一致しないことは致命的にはなりませ
+ん。
+
+サーバが(EC)DHEグループを選択し、クライアントが適合する"key_share"拡
+張を初回のClientHelloに提供しない場合、サーバはHelloRetryRequestメッ
+セージ(Section 4.1.4)を応答しなければなりません[MUST]。
+
+サーバがパラメータの選択に成功し、HelloRetryRequestも不要であった場合、
+選択したパラメータSeverHelloにて下記のように通知します。
+
+ - PSKを利用する場合、サーバーは"pre_shared_key"拡張に選択した鍵を入
+   れて送信します。
+
+ - PSKを利用しない場合は必ず(EC)DHEと証明書ベースの認証を利用します。
+
+ - (EC)DHEが利用される時は、サーバは"key_share"拡張もまた提供します。
+
+ - 証明書による認証を行う時は、サーバはCertificateメッセージ(Section 4.4.2)
+   とCertificateVerifyメッセージ(Section 4.4.3)を送信する。TLS 1.3を
+   規定するこの文書では、PSKと証明書のどちらかは必ず利用されるが、両
+   方を同時に利用することはない。ただし、将来的に両方を同時に利用する
+   方法を定義する可能性はあります。
+
+サーバがサポートするパラメータのセットを折衝できない場合(つまり、クラ
+イアントとサーバ間で一致するパラメータがない場合)、"handshake_failure"
+または"insufficient_security"のfatalアラートでハンドシェイクを破棄する
+必要があります[MUST]。(Section 6を参照)
+
+
+4.1.2. Client Hello
+クライアントが最初にサーバと接続する時、最初のメッセージとしてClientHello
+の送信が要求されます[REQUIRED]。クライアントはサーバがClientHelloに対し
+てHelloRetryRequestを応答した場合もまた、ClientHelloを送信します。この
+場合、クライアントは下記の場合を除いて、改変することなしに同じClientHello
+を送信しなければなりません[MUST]。
+
+ - HelloRetryRequestに"key_share"拡張が提供されている場合、通知されたグ
+   ループに含まれる、1つのKeyShareEntryの共有リストに置き換えます。
+
+ - もし"early_data"拡張(Section 4.2.9)があった場合は削除します。Early
+   dataはHelloRetryRequestの後は利用できません。
+
+ - HelloRetyrRequestに"cookie"拡張が提供されている場合は、それを取り込み
+   ます。
+
+ - "pre_shared_key"拡張がある場合、"obfuscated_ticket_age"によって再計算
+   を行い、値を更新します。また、サーバの通知した暗号スイートとPSKは任意
+   で削除しても構いません。
+
+TLS 1.3は再ネゴシエーションを禁止しているため、サーバが他のタイミングで
+ClientHelloを受信した場合、"unexpected_message"アラートにより、コネクショ
+ンを終了しなければなりません[MUST]。
+
+サーバがTLS 1.3以前のバージョンのコネクションを確立している時に、TLS 1.3
+のClientHelloの再ネゴシエーションを受けた場合、前バージョンを保持し続けな
+ければなりません[MUST]。特に、TLS 1.3でネゴシエーションは行ってはいけませ
+ん[MUST NOT]。
+
+
+ClientHelloメッセージ構造:
+
+    uint16 ProtocolVersion;
+        opaque Random[32];
+      
+        uint8 CipherSuite[2];    /* Cryptographic suite selector */
+      
+        struct {
+            ProtocolVersion legacy_version = 0x0303;    /* TLS v1.2 */
+            Random random;
+            opaque legacy_session_id<0..32>;
+            CipherSuite cipher_suites<2..2^16-2>;
+            opaque legacy_compression_methods<1..2^8-1>;
+            Extension extensions<8..2^16-1>;
+        } ClientHello;
+
+ legacy_version
+  以前のTLSバージョンでは、このフィールドはバージョンのネゴシエーションと
+  クライアントがサポートしている最も新しいバージョンを通知するために利用
+  されていました。経験的に多くのサーバは正しくバージョンのネゴシエーショ
+  ンを実装しておらす、サーバは自身がサポートしているよりも高いバージョン
+  のClientHelloを受け付けない、バージョンに不寛容であることがわかっていま
+  す。TLS 1.3では、バージョンの設定を"supported_versions"拡張(Section 4.2.1)
+  で通知し、legacy_versionフィールドはTLS 1.2である0x0303が設定されなけれ
+  ばなりません[MUST]。
+
+ random 
+  セキュアな乱数生成機によって生成された32バイトの値。
+  Appendix Cの追加情報を参照。
+
+ legacy_session_id
+  TLS 1.3以前のTLSでは、このバージョンでPre-Shared Keys(Section 2.2参照)
+  に統合された、"session resumption"をサポートしていました。このフィール
+  ドはTLS 1.3をネゴシエーションするサーバは無視する必要があります[MUST]。
+  また、クライアントはTLS 1.3より前のサーバによるセションIDをキャッシュし
+  てはならず、長さ0のベクトル(つまり、0バイトの長さのフィールド)を設定し
+  なければなりません[MUST]。
+
+ cipher_suites
+  クライアントがサポートしている対称暗号のリストです。具体的には、レコー
+  ド保護アルゴリズム(秘密鍵の長さを含む)と、HKDFに利用されるハッシュとが
+  クライアントが優先する順番で通知します。このリストに含まれる暗号スイー
+  トがサーバで認識できない、サポートしない、利用を望まない場合はサーバは
+  その暗号スイートを無視して、残りの暗号スイートを見ていかなければなりま
+  せん[MUST]。値はAppendix B.4で定義されています。クライアントがPSK鍵を
+  確立しようとするなら、少なくとも1つのPSKに関連したハッシュの暗号スイー
+  トを通知するべきです[SHOULD]。
+
+ legacy_compression_methods
+  TLS 1.3以前のバージョンでは、このフィールドにサポートしている圧縮メソッ
+  ドのリストを送信していました。TLS 1.3のすべてのClientHelloでは、このベ
+  クトルには以前のバージョンで"null"圧縮を表す1バイトの0の値を設定しなけ
+  ればなりません[MUST]。このフィールドに他の値を含んだTLS 1.3のClientHello
+  を受信した場合、サーバは"illegal_parameter"アラートによりハンドシェイク
+  を破棄しなければなりません[MUST]。
+  注意:TLS 1.3サーバはTLS 1.2より前のバージョンの他の圧縮メソッドを含んだ
+  ClientHelloを受信する可能性がありますが、その場合は以降に記述する手順で
+  前バージョンのTLSにしなければなりません[MUST]。TLS 1.3のClientHelloは、
+  0x0303のlegacy_versionによりTLS 1.2と同一に見えますが、suppoerted_version
+  拡張により、0x0304の最も高いバージョンを通知します。
+
+ extensions
+  クライアントはextensionsフィールドにより、サーバへ拡張機能を要求します。
+  "Extension"のフォーマットはSection 4.2に定義されています。TLS 1.3では、
+  以前のバージョンのClientHelloに存在した機能が、拡張へと移動されているた
+  め、特定の拡張は必須となっています。サーバは理解できない拡張については
+  無視しなければなりません[MUST]。
+
+すべてのTLSバージョンは、compression_methodフィールドの後ろに、任意で拡張
+フィールドを付けることができます。TLS 1.3のClientHelloメッセージは必ず拡張
+を含める必要があります(少なくとも、"supported_versions"はTLS 1.2のClientHello
+と区別するため)。しかし、TLS 1.3サーバは拡張フィールドがない、以前のバージョ
+ンのClientHelloメッセージを受ける可能性があります。ClientHelloのcompression_methods
+フィールドの後ろの拡張の存在の判定により検知することができます。
+注意:この任意のデータの検知は、通常のTLSの可変フィールドとは異なりますが、
+以前のTLSの拡張の定義と互換性があるように利用されます。
+TLS 1.3サーバは、TLS 1.3でネゴシエーションする場合は"supported_version"拡張
+の存在を最初にチェックする必要があります。TLS 1.3より前のバージョンのTLSで
+ネゴシエーションする場合、サーバはlegacy_compression_methodsより後にデータ
+がないか、データ無しの有効な拡張ブロックを含んでいることをチェックしなけれ
+ばなりません[MUST]。もしそうではないなら、"decode_error"アラートによりハン
+ドシェイクを破棄しなければなりません[MUST]。
+
+クライアントが拡張機能を追加した要求を行った時で、その機能をサーバがサポー
+ト指定なかった場合、クライアントはハンドシェイクを破棄することができます[MAY]。
+
+ClientHelloメッセージの送信後、クライアントはServerHelloかHelloRetryRequest
+メッセージを待ちます。early dataを利用する場合、クライアントは次のハンドシェ
+イクメッセージを待つ間、Section 2.3のearly application dataを送信することが
+できます。
+
+
+4.1.3. Server Hello
+サーバはClientHelloのパラメータが受付可能なものであった場合、ハンドシェイク
+を継続するため、応答としてServerHelloメッセージを送信します。
+
+ServerHelloメッセージ構造:
+
+    struct {
+        ProtocolVersion version;
+        Random random;
+        CipherSuite cipher_suite;
+        Extension extensions<6..2^16-1>;
+    } ServerHello;
+
+ version
+  このフィールドはこのコネクションで利用するTLSバージョンを格納します。サー
+  バはClientHelloのsupported_varsion拡張のリストからバージョンを選択するか、
+  TLS 1.2以前のバージョンでネゴシエーションを行わなければなりません[MUST]。
+  クライアントは、望まないバージョンを受けた場合、ハンドシェイクを破棄しな
+  ければなりません[MUST]。このTLS 1.3の値は、0x0304です。(後方互換について
+  の詳細はAppendix Dを参照してください)
+
+ random
+  セキュアな乱数生成機によって生成された32バイトの値です。
+  Appendix Cの追加情報を参照。
+  TLS 1.2とTLS 1.1でネゴシエーションを行う場合、最後の8バイトは後述にある
+  ように上書きする必要がありますが、他はランダムのままである必要がありま
+  す[MUST]。この値は、ClientHello.randomとは独立して、サーバによって生成
+  されなければなりません[MUST]。
+
+ cipher_suite
+  ClientHello.cipher_suitesのリストからサーバによって選択された1つの暗号
+  スイートの値です。クライアントは、要求していない暗号スイートを受けた場
+  合、"illegal_parameter"のアラートによりハンドシェイクを破棄しなければな
+  りません[MUST]。
+
+ extensions
+  拡張機能のリストです。ServerHelloは暗号コンテキストを確立するために要求
+  された拡張のみを含めなければなりません[MUST]。今のところ、"key_share"や
+  "pre_shared_key"などの拡張のみです。現状、すべてのTLS 1.3 ServerHelloメ
+  ッセージは前述の2つの拡張、または(EC)DHE鍵で確立するPSKを利用するかの
+  いずれか一方、あるいは両方を含めます。他の拡張はEncryptedExtensionsメッ
+  セージとして送信されます。
+
+TLS 1.3はサーバランダムにダウングレード保護のメカニズムを持っています。
+TLS 1.3サーバはTLS 1.2以前のバージョンとして、ClientHelloに応答する場合、
+最後の8バイトを特定の値にする必要があります[MUST]。
+
+TLS 1.3サーバがTLS 1.2でネゴシエーションを行う場合、サーバランダムの値を
+次のように設定しなければなりません[MUST]。
+
+ 44 4F 57 4E 47 52 44 01
+
+TLS 1.1以前のバージョンでネゴシエーションを行う場合、サーバランダムの値を
+次のように設定しなければなりません。これは、TLS 1.3サーバは必須であり[MUST]、
+TLS 1.2サーバは推奨の[SHOULD]動作です。
+
+ 44 4F 57 4E 47 52 44 00
+ 
+TLS 1.3クライアントは、TLS 1.2以前のServerHelloを受信した場合、サーバラン
+ダムの最後の8バイトが上記の値に一致していないことをチェックする必要があり
+ます[MUST]。TLS 1.2クライアントもまた、TLS 1.1以前のServerHelloを受信した
+場合、サーバランダムの最後の8バイトが上記の2つ目の値に一致していないことを
+チェックすべきです[SHOULD]。もし値の一致があるのであれば、クライアントは
+"illegal_parameter"のアラートによってハンドシェイクを破棄しなければなりま
+せん[MUST]。これは、Finishedの交換で行われるダウングレード攻撃に対する保護
+メカニズムです。これは、クライアントとサーバのランダム値によるシグネチャを
+含んだ、TLS 1.2以前にあるServerKeyExchangeメッセージが、攻撃者によって脆弱
+なものに書き換えられたことを検知できないためです。このダウングレード保護は、
+静的なRSAを利用する場合は提供されません。
+
+注意:これは[RFC5246]より変更された点であるため、実際の多くのTLS 1.2クライ
+アントやサーバは上記の振る舞いを行いません。
+
+レガシーのTLSクライアントは、TLS 1.2以前にある再ネゴシエーションを行えます
+が、再ネゴシエーション中にTLS 1.3のServerHelloを受信した場合は、
+"protocol_version"のアラートによってハンドシェイクを破棄しなければなりませ
+ん[MUST]。
+注意:TLS 1.3でネゴシエーションをしている場合は、再ネゴシエーションを行うこ
+とはできません。
+
+RFC EDITOR:この文章は削除される予定です
+ドラフトバージョンの実装(Section 4.2.1.1参照)では、クライアントおよびサーバ
+に、この実装を行うべきではありません。RFC化前のクライアントがRFC化後のサー
+バに接続する、またはその逆では、TLS 1.2にダウングレードするようにすべきです。
+このメカニズムを有効にする場合、相互的に失敗が起きるようにするべきです。
+
+
+4.1.4. Hello Retry Request
+サーバは、ClientHelloに受け入れ可能なパラメータはあるが、ハンドシェイクを進
+める情報が十分になかった場合、応答としてHelloRetryRequestメッセージを送信し
+ます。
+
+HelloRetryRequestメッセージ構造:
+
+    struct {
+        ProtocolVersion server_version;
+        CipherSuite cipher_suite;
+        Extension extensions<2..2^16-1>;
+    } HelloRetryRequest;
+
+version、cipher_suite、extensionsフィールドは、ServerHelloのものと同じ意味
+を持っています。サーバはクライアントのClientHelloに必要な拡張のみを送信すべ
+きです。ServerHelloと同様に、HelloRetryRequestは、"cookie"拡張(Section 4.2.2参照)
+を除き、最初に提供されたクライアントのClientHelloに要求されていない拡張を含
+めてはいけません[MUST NOT]。
+
+HelloRetryRequestを受信した場合、クライアントはその拡張ブロックが空ではない
+ことを確認しなければなりません[MUST]。空であった場合、"decode_error"アラート
+によりハンドシェイクを破棄しなければなりません[MUST]。クライアントは、
+HelloRetryRequestがClientHelloから何らかの変更が行われている場合、
+"illegal_parameter"アラートによりハンドシェイクを破棄しなければなりません[MUST]。
+もし同じコネクション上で2回めのHelloRetryRequestを受けた場合(つまり、
+HelloRetryRequestの応答のClientHelloでHelloRetryRequestを受けた場合)、
+"unexpected_message"アラートによりハンドシェイクを破棄しなければなりません[MUST]。
+
+つまり、クライアントはHelloRetryRequestのすべての拡張を受け付け、更新した
+2つ目のClientHelloを送信しなければなりません[MUST]。HelloRetryRequestの拡張
+の定義は次のようになっています。
+
+ - cookie(Section 4.2.2参照)
+
+ - key_share(Section 4.2.7参照)
+
+加えて、ClientHelloの更新には、クライアントは選択した暗号スイートに関連しな
+い事前共有鍵を要求すべきではありません[SHOULD NOT]。これは、クライアントが
+2つ目のClientHelloで複数のハッシュの計算を避けるためです。要求していない暗
+号スイートを受け取ったクライアントはハンドシェイクを破棄しなければなりませ
+ん[MUST]。サーバは更新されたClientHelloに合った暗号スイートによるネゴシエー
+ションを保証しなければなりません[MUST]。ServerHelloを受信した上で、クライア
+ントは暗号スイートにHelloRetryRequestで要求したものが提供されていることをチェ
+ックしなければならず[MUST]、提供されていなかった場合は"illegal_parameter"ア
+ラートによりハンドシェイクを破棄します。
+
+
+
+続く
+
 
