@@ -1175,6 +1175,183 @@ HelloRetryRequestの応答のClientHelloでHelloRetryRequestを受けた場合)�
 ラートによりハンドシェイクを破棄します。
 
 
+4.2. Extensions
+多くのTLSメッセージは、タグ長によってエンコードされた拡張構造を含んでいます。
+
+
+    struct {
+        ExtensionType extension_type;
+        opaque extension_data<0..2^16-1>;
+    } Extension;
+
+   enum {
+       server_name(0),                             /* RFC 6066 */
+       max_fragment_length(1),                     /* RFC 6066 */
+       status_request(5),                          /* RFC 6066 */
+       supported_groups(10),                       /* RFC 4492, 7919 */
+       signature_algorithms(13),                   /* RFC 5246 */
+       use_srtp(14),                               /* RFC 5764 */
+       heartbeat(15),                              /* RFC 6520 */
+       application_layer_protocol_negotiation(16), /* RFC 7301 */
+       signed_certificate_timestamp(18),           /* RFC 6962 */
+       client_certificate_type(19),                /* RFC 7250 */
+       server_certificate_type(20),                /* RFC 7250 */
+       padding(21),                                /* RFC 7685 */
+       key_share(40),                              /* [[this document]] */
+       pre_shared_key(41),                         /* [[this document]] */
+       early_data(42),                             /* [[this document]] */
+       supported_versions(43),                     /* [[this document]] */
+       cookie(44),                                 /* [[this document]] */
+       psk_key_exchange_modes(45),                 /* [[this document]] */
+       certificate_authorities(47),                /* [[this document]] */
+       oid_filters(48),                            /* [[this document]] */
+       post_handshake_auth(49),                    /* [[this document]] */
+       (65535)
+   } ExtensionType;
+
+ - "extension_type"は拡張の種類を特定します。
+ - "extension_data"は特定の拡張の種類の情報を格納します。
+
+拡張種類のリストは、Section 11で述べられているように、IANAによってメンテ
+ナンスされています。
+
+拡張は、通常はリクエスト/レスポンス形式の構造を取りますが、いくつかの拡張
+はレスポンスを不要とする、通知のみのものもあります。クライアントはClientHello
+メッセージでリクエストの拡張を送信し、サーバはこれに対する応答の拡張を
+ServerHello、EncryptedExtensions、HelloRetryRequestおよびCertificateメッセ
+ージに載せて送信します。サーバのリクエストの拡張は、クライアントの認知の
+Certificateメッセージ応答[MAY]に対する要求をCertificateRequestメッセージに
+て送信します。サーバはまた、クライアントが直接応答しなくても、NewSessionTicket
+に要求されていない拡張を送信することができます[MAY]。
+
+実装として、リモートのエンドポイントが"cookie"拡張を除き、一致する拡張リク
+エストを拡張を送信してこなかった場合、それに応じる拡張を応答してはなりませ
+ん[MUST]。そのような拡張を受信した場合は、エンドポイントは"unsupported_extension"
+アラートにより、ハンドシェイクを破棄しなければなりません[MUST]。
+
+次の表は、各メッセージに付与できる拡張を記載しています。
+表記として: CH (ClientHello)、SH (ServerHello)、EE (EncryptedExtensions)、
+CT (Certificate)、CR (CertificateRequest)、NST (NewSessionTicket)、
+HRR (HelloRetryRequest)になります。実装として、解釈はできるがメッセージに
+紐付かない拡張を受信した場合は、"illegal_parameter"アラートによりハンドシェ
+イクを破棄しなければなりません[MUST]。
+
+    +--------------------------------------------------+-------------+
+    | Extension                                        |     TLS 1.3 |
+    +--------------------------------------------------+-------------+
+    | server_name [RFC6066]                            |      CH, EE |
+    |                                                  |             |
+    | max_fragment_length [RFC6066]                    |      CH, EE |
+    |                                                  |             |
+    | status_request [RFC6066]                         |  CH, CR, CT |
+    |                                                  |             |
+    | supported_groups [RFC7919]                       |      CH, EE |
+    |                                                  |             |
+    | signature_algorithms [RFC5246]                   |      CH, CR |
+    |                                                  |             |
+    | use_srtp [RFC5764]                               |      CH, EE |
+    |                                                  |             |
+    | heartbeat [RFC6520]                              |      CH, EE |
+    |                                                  |             |
+    | application_layer_protocol_negotiation [RFC7301] |      CH, EE |
+    |                                                  |             |
+    | signed_certificate_timestamp [RFC6962]           |  CH, CR, CT |
+    |                                                  |             |
+    | client_certificate_type [RFC7250]                |      CH, EE |
+    |                                                  |             |
+    | server_certificate_type [RFC7250]                |      CH, CT |
+    |                                                  |             |
+    | padding [RFC7685]                                |          CH |
+    |                                                  |             |
+    | key_share [[this document]]                      | CH, SH, HRR |
+    |                                                  |             |
+    | pre_shared_key [[this document]]                 |      CH, SH |
+    |                                                  |             |
+    | psk_key_exchange_modes [[this document]]         |          CH |
+    |                                                  |             |
+    | early_data [[this document]]                     | CH, EE, NST |
+    |                                                  |             |
+    | cookie [[this document]]                         |     CH, HRR |
+    |                                                  |             |
+    | supported_versions [[this document]]             |          CH |
+    |                                                  |             |
+    | certificate_authorities [[this document]]        |      CH, CR |
+    |                                                  |             |
+    | oid_filters [[this document]]                    |          CR |
+    |                                                  |             |
+    | post_handshake_auth [[this document]]            |          CH |
+    +--------------------------------------------------+-------------+
+
+複数の別のタイプの拡張がある時は、拡張の順序は"pre_shared_key"を除いて
+どのような順番でも問題ありません[MAY]。Section 4.2.10に記載の"pre_shared_key"
+はClientHelloの拡張の最後尾になければなりません[MUST]。拡張は、同じ拡張
+ブロックに、複数の同一タイプの拡張を入れてはいけません[MUST NOT]。
+
+TLS 1.3ではTLS 1.2と異なり、PSKのレジュームでも、拡張は各ハンドシェイク
+でネゴシエーションが行われます。しかし、0-RTTパラメータは事前のハンドシェ
+イクでネゴシエーションされ、合わない場合は0-RTTは拒否されます(Section 4.2.9参照)。
+
+新しいプロトコルと既存のプロトコルとには、微細な(または微細ではない)相互
+作用として、全体のセキュリティ性の重大な減少が発生するかもしれません。次
+に新しい拡張を設計する上での取るべき考えを考察しています。
+
+ - いくつかの場合、サーバは同意しない拡張をエラー状態としたり、ただ単に
+   サポートしている特定の機能のみを選択します。一般的にエラーアラートは
+   前者で返し、応答の拡張フィールドは後者で返します。
+
+ - 拡張は可能な限り、力任せの(力任せではなくとも)攻撃を防ぐように設計さ
+   れるべきです。この原則は、セキュリティ上の問題を引き起すような機能に
+   関係なく守られるべきです。事実として、拡張フィールドまでをFinishメッ
+   セージの入力とすることはセキュリティ的に十分ではありますが、ハンドシェ
+   イクフェーズでメッセージの意味を変更する際は、特段の注意が必要です。
+   設計者および実装者は、攻撃者がメッセージの改変や拡張の挿入、削除、置
+   き換えが可能であり、それが認証されたハンドシェイクとなることまでを想
+   定しておくべきです。
+
+
+4.2.1. Supported Versions
+
+    struct {
+        ProtocolVersion versions<2..254>;
+    } SupportedVersions;
+
+"supported_versions"拡張は、クライアントが自身のサポートしているTLSバー
+ジョンを通知するために使用されます。拡張には、優先度が高い順番でサポート
+バージョンのリストを含んでいます。実装の詳細として、この拡張には利用でき
+るすべてのTLSバージョンを入れて送信しなければなりません[MUST]。(実装とし
+て、最小構成は0x0304を含める必要がありますが、もし以前のTLSバージョンの
+ネゴシエーションが可能であれば、それらも追加されるべきです[MUST])
+
+この拡張がなかった場合、たとえClientHello.legacy_versionが0x0304以降であっ
+たとしても、サーバは[RFC5246]のTLS 1.2以前のバージョンでネゴ市エーション
+を行う必要があります[MUST]。サーバはClientHelloのlegacy_versionが0x0304
+以降出会った場合、ハンドシェイクを破棄しても構いません[MAY]。
+
+拡張が存在した場合は、サーバはClientHello.legacy_versionの値を無視すべき
+で[MUST]、"supported_versions"拡張のみによってクライアントの設定を決定し
+なければなりません[MUST]。サーバは拡張からのみ利用するTLSバージョンを選
+択し[MUST]、不明なバージョンは無視しなければなりません[MUST]。
+注意:これはTLS 1.2以前のバージョンとのネゴシエーションを可能にするための
+メカニズムです。以前のバージョンをサポートするTLS 1.3の実装は、TLS 1.2を
+サポートすべきです[SHOULD]。サーバは、ClientHelloにこの拡張を含むが、そ
+の中のリストに0x0304を含まないものを受信た時の用意をしておくべきです。
+
+サーバは"supported_versions"拡張を送信してはいけません[MUST NOT]。サーバ
+が選択したバージョンは、以前のTLSバージョンのように、ServerHello.version
+フィールドに格納されます。
+
+
+4.2.1.1. ドラフトバージョンの通知
+
+RFC EDITOR:この文章は削除される予定です
+
+最終的にRFCとして、TLS 1.3のバージョンは0x0304になりますが、ドラフトバー
+ジョンの実装は代わりにServerHello.versionとHelloRetryRequest.server_version
+には{0x7f,draft_version}を通知すべきです[SHOULD]。例えば、draft-17では
+{0x7f, 0x11}としてエンコードされます。これは、RFC化前の実装において、た
+とえ互換性がなくとも、互いに安全にネゴシエーションを行うためのものです。
+
+
 
 続く
 
