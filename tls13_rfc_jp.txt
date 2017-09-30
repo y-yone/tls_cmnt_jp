@@ -1499,6 +1499,140 @@ TLS 1.2のこの拡張の定義はこれとは異なることに注意してく�
    RSAの暗号スイートとして使われます。
 
 
+4.2.4. Certificate Authorities
+"certificate_authorities"拡張は、エンドポイントがサポートしている、あるいは
+受信先のエンドポイントが証明書を選択するための指標として利用するための、証
+明書の認証局を通知するために使用されます。
+
+"certificate_authorities"拡張のボディはCertificateAuthoritiesExtension構造
+体で構成されています。
+
+    opaque DistinguishedName<1..2^16-1>;
+
+    struct {
+        DistinguishedName authorities<3..2^16-1>;
+    } CertificateAuthoritiesExtension;
+
+ authorities
+  DERエンコード[X690]された、受付可能な認証局のDN[X501]のリストです。これら
+  のDNはトラストアンカーか中間CA証明書のDNを指定します。つまり、このメッセー
+  ジは望ましい既知のトラストアンカーを記載するために使用されます。
+
+クライアントはClientHelloに"certificate_authorities"拡張を入れて送信すること
+ができます[MAY]。サーバはCertificateRequestメッセージで送信することができま
+す[MAY]。
+
+サーバの"trusted_ca_keys"拡張は、[RFC6066]と同じ目的で利用しますが、少し複雑
+なものとなっており、またTLS 1.3では利用されません(しかしながら、クライアント
+が以前のバージョンのTLSを要求する場合は、クライアントのClientHelloメッセージ
+に載る場合があります)。
+
+
+4.2.4.1. OID Filters
+"oid_filters"拡張は、サーバがクライアント証明書が必要な場合に、OIDと値のペア
+を提供することができます。この拡張は、サーバによって提供された場合、ただ
+CertificateRequestメッセージを送信しなければなりません。
+
+    struct {
+        opaque certificate_extension_oid<1..2^8-1>;
+        opaque certificate_extension_values<0..2^16-1>;
+    } OIDFilter;
+
+    struct {
+        OIDFilter filters<0..2^16-1>;
+    } OIDFilterExtension;
+
+ filters
+  DERエンコード[X690]フォーマットの許可されている証明書拡張OID[RFC5280]のリ
+  ストです。一部の証明書拡張OIDは複数の値をとります(つまり、Extended Key Usage
+  です)。サーバが空ではないフィルタリストを通知した場合、クライアント証明書
+  にはクライアントが認識した拡張OIDのすべてを応答に含めなければなりません[MUST]。
+  クライアントによって認識された各拡張OIDのすべてがクライアント証明書に含ま
+  れなければなりません[MUST](ただし証明書が他の値である可能性があります[MAY])。
+  しかし、クライアントは認識できない拡張OIDについては無視し、スキップしなけ
+  ればなりません[MUST]。クライアントが証明書拡張OIDによって要求されたOIDを
+  無視し、要求を満たさない証明書を提供した場合、サーバ自身の裁量によって、
+  クライアント認証無しで接続を継続するか、"unsupported_certificate"アラート
+  でハンドシェイクを破棄するか選択できます[MAY]。
+
+PKIX RFCは証明書拡張OIDの種類と対応する値を定義します。種類によって、ビット
+単位による照会が必要ない場合があります。TLSの実装には、証明書拡張OIDを利用
+した証明書の選択を、それぞれのPKIライブラリに依存した動作で行われることが
+期待されています。
+
+このドキュメントは、[RFC5280]に定義された2つの標準の証明書拡張による照会ル
+ールを定義しています。
+
+ - リクエスト内すべてのkey usageビットが、証明書のKey Usage拡張にある場合、
+   Key Usage拡張が一致することになります。
+
+ - 証明書のExtended Key Usage拡張は、リクエストの目的のOIDキーがすべて
+   Extended Key Usageに見つかった場合でも一致したことになります。リクエス
+   トに、anyExtendedKeyUsage OIDを使用してはいけません[MUST]。
+
+他の仕では、別の証明書拡張の一致規則を定義している可能性があります。
+
+
+4.2.5. ハンドシェイク後のクライアント認証
+"post_handshake_auth"拡張は、クライアントがハンドシェイク後にSection 4.6.2
+の認証処理を行いたいことを通知します。サーバは、クライアントが要求しない限
+り、ハンドシェイク後にCertificateRequestを送信してはなりません[MUST]。サー
+バはこの拡張を送信してはなりません[MUST NOT]。
+
+"post_handshake_auth"拡張の"extension_data"フィールドは長さは0です。
+
+4.2.6. Negotiated Groups
+クライアントによって送信される、"supported_groups"拡張は、クライアントがサ
+ポートしている鍵交換のグループ名が優先度が高い順に通知します。
+
+注意:TLS 1.3以前のバージョンでは、この拡張は"elliptic_curves"拡張と呼ばれ
+ており楕円曲線のグループのみが含まれていました。詳細は[RFC4492]および
+[RFC7919]を参照してください。また、この拡張はECDSAにおける曲線種類のネゴシ
+エーションにも利用されていました。署名アルゴリズムについては、独立してネゴ
+シエーションされるようになっています(Section 4.2.3参照)。
+
+この拡張の"extension_data"フィールドは"NamedGroupList"の値です。
+
+    enum {
+        /* Elliptic Curve Groups (ECDHE) */
+        secp256r1(0x0017), secp384r1(0x0018), secp521r1(0x0019),
+        x25519(0x001D), x448(0x001E),
+
+        /* Finite Field Groups (DHE) */
+        ffdhe2048(0x0100), ffdhe3072(0x0101), ffdhe4096 (0x0102),
+        ffdhe6144(0x0103), ffdhe8192(0x0104),
+
+        /* Reserved Code Points */
+        ffdhe_private_use(0x01FC..0x01FF),
+        ecdhe_private_use(0xFE00..0xFEFF),
+        (0xFFFF)
+    } NamedGroup;
+
+    struct {
+        NamedGroup named_group_list<2..2^16-1>;
+    } NamedGroupList;
+
+ Elliptic Curve Groups (ECDHE)
+  FISP 186-4[DSS]や[RFC7748]に定義されている、名前付き曲線のサポートを通知
+  します。0xFE00から0xFEFFはプライベート利用のための予約領域です。
+
+ Finite Field Groups (DHE)
+  [RFC7919]に定義の有限体グループのサポートを通知します。0x01FCから0x01FF
+  はプライベート利用のための予約領域です。
+
+named_group_listの要素はクライアントの優先度によって並べられています(先頭
+が最優先)。
+
+TLS 1.3では、サーバは"supported_groups"拡張をクライアントに送信することが
+できます。クライアントは、ハンドシェイクの成立前に"supported_groups"で見つ
+けた情報で動作してはなりませんが[MUST NOT]、ハンドシェイクの成立から学習し
+た情報で以降のコネクションの"key_share"拡張に使うグループを変更することが
+できます。サーバが"key_share"拡張にある一つのグループをサポートしているが、
+ClientHelloでまだ受け付けられていない場合、クライアントの設定を更新するた
+め、"supported_groups"を送信するべきです[SHOULD]。この場合、クライアントの
+サポート状況に関係なく、サーバがサポートしているすべてのグループを拡張に含
+めるべきです[SHOULD]。
+
 
 続く
 
