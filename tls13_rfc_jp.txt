@@ -1634,6 +1634,129 @@ ClientHelloでまだ受け付けられていない場合、クライアントの
 めるべきです[SHOULD]。
 
 
+4.2.7. Key Share
+"key_share"拡張はエンドポイントの暗号パラメータを格納したものです。
+
+クライアントは空のclient_shareを送信し、追加のラウンドトリップコストを払い、
+サーバのグループ選択の要求を見ることがあります。(Section 4.1.4参照)
+
+    struct {
+        NamedGroup group;
+        opaque key_exchange<1..2^16-1>;
+    } KeyShareEntry;
+
+ group
+  鍵交換方式の名前グループです。有限体のDiffie-Hellman[DH]パラメータは
+  Section 4.2.7.1に、楕円曲線のDiffie-Hellmanは Section 4.2.7.2に記載してい
+  ます。
+
+ key_exchange
+  鍵交換の情報です。このフィールドの内容は、それぞれの方式によって決められ
+  ています。
+
+この拡張の"extension_data"フィールドは次の"KeyShare"を含んでいます。
+
+    struct {
+        select (Handshake.msg_type) {
+            case client_hello:
+                KeyShareEntry client_shares<0..2^16-1>;
+
+            case hello_retry_request:
+                NamedGroup selected_group;
+
+            case server_hello:
+                KeyShareEntry server_share;
+        };
+    } KeyShare;
+
+ client_shares
+  クライアントの優先度順に並んだ、要求したKeyShareEntryのリストです。このベ
+  クトルは、クライアントがHelloRetryRequestを要求している場合、空になる可能
+  性があります。各KeyShareEntryの値は、"supported_groups"拡張で要求されたグ
+  ループと一致しなければならず[MUST]、同じ順番でなければなりません[MUST]。
+  しかし、値は"supported_groups"拡張と完全に同じである必要はなく[MAY]、最も
+  優先しているグループが省略される可能性があります[MAY]。このような状況では、
+  最も優先するグループが新しく、サポート状況が十分でない場合、前世代の鍵が共
+  有されることが発生し得ます。
+  
+ selected_group
+  サーバがネゴシエーションを行いたいため、ClientHello/KeyShareで再試行を要求
+  している、双方でサポートしているグループ。
+
+ server_share
+  クライアントのKeyShareEntryの内の、一つのKeyShareEntryの値。
+
+クライアントはKeyShareEntryを複数要求することができ、各々は鍵交換のパラメー
+タのセットです。具体的には、クライアントが共有を要求するいくつかの楕円曲線ま
+たは複数のFFDHEグループになります。各KeyShareEntryのkey_exchangeの値は、独立
+して生成されなければなりません[MUST]。クライアントは複数のKeyShareEntryの値で
+同じグループを要求してはいけません[MUST NOT]。クライアントは自身の"supported_groups"
+にないKeyShareEntryの値を提供してはいけません[MUST NOT]。また、サーバはこれら
+のルールのチェックを行い、もし1つでも違反している場合は"illegal_parameter"ア
+ラートによりハンドシェイクを破棄する可能性があります[MAY]。
+
+この拡張をHelloRetryRequestで受信した時、クライアントは次の2つについて検証を
+行わなければなりません[MUST]。
+(1)selected_groupフィールドが提供したClientHelloの"supported_groups"拡張に含
+   まれていたものであること。
+(2)selected_groupフィールドが提供したClientHelloの"key_share"拡張に含まれてい
+   ないものであること。
+もし、いずれかの検証に失敗した場合は、クライアントは"illegal_parameter"アラー
+トによりハンドシェイクを破棄しなければなりません[MUST]。つまり、新たなClientHello
+を送信した時、クライアントは元の"key_share"拡張を、契機となったHelloRetryRequest
+のselected_groupフィールドで通知された、新しいグループのKeyShareEntryに置き換
+えなければなりません[MUST]。
+
+(EC)DHE鍵を利用する場合、サーバはServerHelloで一つのKeyShareEntryを要求します。
+この値はクライアントによって要求されたKeyShareEntryの内、サーバがネゴシエーショ
+ンのために選択した値と同じグループでなければなりません[MUST]。サーバは、
+"supported_groups"拡張で通知されていないKeyShareEntryを送信してはならず[MUST NOT]、
+また、PskKeyExchangeModeの"psk_ke"を利用する時では、KeyShareEntryを送信してはな
+りません[MUST NOT]。クライアントからHelloRetryRequestを受けた場合、クライアント
+はServerHelloのNamedGroupで選択されたものがHelloRetryRequestと同じものであるか
+検証しなければなりません[MUST]。もし検証に失敗した場合、クライアントは
+"illegal_parameter"アラートによりハンドシェイクを破棄しなければなりません[MUST]。
+
+
+4.2.7.1. Diffie-Hellmanパラメータ
+クライアントおよびサーバのDiffie-Hellman[DH]パラメータは、KeyShare中のKeyShareEntry
+構造体のkey_exchangeフィールドにopaqueの形式でエンコードされています。opaque値は
+特定のグループ(グループの定義については[RFC7919]を参照)のDiffie-Hellmanの公開鍵
+(Y = g^X mod p)がビックエンディアンかつ、左詰めでゼロパディングされた形式で格納
+されています。
+
+注意:Diffie-Hellmanグループは、公開鍵が同じ長さになるようにパディングされていま
+     す。
+
+ピアは互いの公開鍵Yが 1 < Y < p-1 の範囲であることを検査シなければなりません[MUST]。
+このチェックは通信相手の振る舞いと、こちらのシステムを小さいサブグループに強制さ
+せないことを保証するものです。	
+
+
+4.2.7.2. ECDHEパラメータ
+クライアントおよびサーバのECDHEパラメータはネットワークバイトオーダで、XとYの値を
+バイナリで表します。これらは内部で長さを記述しておらず、各要素の長さは曲線のパラ
+メータによって決定されます。P-256では、XおよびYは32オクテットの長さで、必要であれ
+ば左詰めでゼロパディングされます。同じく、P-384は48オクテット、P-521は66オクテッ
+トになります。
+
+secp256r1、secp384r1、secp521r1の曲線では、ピアは互いの公開鍵Yが、楕円曲線上の座
+標であることを検証しなければなりません[MUST]。適切な懸賞手順は[X962]のSection 4.3.7
+あるいは[KEYAGREEMENT]のSection 5.6.2.6に定義されています。このプロセスは3つのス
+テップからなります。
+(1)Yが無限遠点ではないこと。
+(2)Y=(x,y)の距離が正しいものであること。
+(3)(x,y)が楕円曲線の解であること。
+実装者は、これらの曲線が正しいサブグループに属していることの検証までは行う必要は
+ありません。
+
+X25519やX448では、公開鍵の値は[RFC7748]に定義されている関数の入力および出力のバイ
+ト配列です。X25519は32バイト、X448は56バイトです。
+
+注意:TLS 1.3以前では、座標フォーマットのネゴシエーションが行われていましたが、
+     TLS 1.3ではこの機能は削除され、単一の座標フォーマットになります。
+
+
 続く
 
 
