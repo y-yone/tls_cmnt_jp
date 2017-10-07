@@ -254,7 +254,7 @@ TLSはアプリケーションプロトコルとは独立しています。TLS�
 
  - 鍵の導出関数について再設計されました。新しい設計では、鍵の特性を分離し、改
    善したことで、暗号技術者による解析が容易になりました。
-   HMAC-based Extract-and-Expand Key Derivation Function(HKDF)は原始性を基底と
+   HMAC-based Extract-and-Expand Key Derivation Function(HKDF)は原子性を基底と
    して使用されています。
 
  - ハンドシェイクのステートマシンを大幅に再構成し、ChangeCipherSpecなどの無駄な
@@ -1755,6 +1755,255 @@ X25519やX448では、公開鍵の値は[RFC7748]に定義されている関数�
 
 注意:TLS 1.3以前では、座標フォーマットのネゴシエーションが行われていましたが、
      TLS 1.3ではこの機能は削除され、単一の座標フォーマットになります。
+
+
+4.2.8. Pre-Shared Key Exchange Mode
+PSKを利用する場合、クライアントは"psk_key_exchange_modes"拡張を送信しなければなり
+ません[MUST]。この拡張の意味として、クライアントがこれらの方式のPSKのみをサポート
+し、ClientHelloのPSKの要求とサーバがNewSessionTicketで提供するものの両方を制限する
+事になります。
+
+クライアントは、"pre_shared_key"拡張を要求する場合、"psk_key_exchange_modes"拡張を
+提供しなければなりません[MUST]。クライアントが"psk_key_exchange_modes"拡張なしに
+"pre_shared_key"拡張を要求した場合、サーバはハンドシェイクを破棄しなければなりませ
+ん[MUST]。サーバはクライアントのリストにない鍵交換方式を選択してはいけません[MUST NOT]。
+この拡張もPSKによるレジュームのりようを制限します。サーバは通知されている方式と互
+換性のないチケットによるNewSessionTicketを送信すべきではありません[SHOULD NOT]。
+しかし、もしサーバがそのような振る舞いを行ったとしても、クライアントへの影響はセッ
+ションのレジュームが失敗するのみに留まります。
+
+サーバは"psk_key_exchange_modes"拡張を送信してはなりません[MUST NOT]。
+
+    enum { psk_ke(0), psk_dhe_ke(1), (255) } PskKeyExchangeMode;
+
+    struct {
+        PskKeyExchangeMode ke_modes<1..255>;
+    } PskKeyExchangeModes;
+
+ psk_ke
+  PSKのみによって鍵を確立する方式です。この方式ではサーバは"key_share"値を提供して
+  はいけません[MUST NOT]。
+
+ psk_dhe_ke
+  (EC)DHEを用いたPSKにより鍵を確立する方式です。この方式ではクライアントおよびサー
+  バはSection 4.2.7に記載の"key_share"値を提供しなければなりません[MUST]。
+
+
+4.2.9. Early Data Indication
+PSKが利用される時、クライアントは最初のメッセージ送信時にアプリケーションデータを送
+信することができます。クライアントはこの機能を利用する場合、"early_data"拡張と共に
+"pre_shared_key"も提供しなければなりません[MUST]。
+
+この拡張の"extension_data"フィールドは"EarlyDataIndication"値を格納しています。
+
+    struct {} Empty;
+
+    struct {
+        select (Handshake.msg_type) {
+            case new_session_ticket:   uint32 max_early_data_size;
+            case client_hello:         Empty;
+            case encrypted_extensions: Empty;
+        };
+    } EarlyDataIndication;
+
+max_early_data_sizeについてはSection 4.6.1を参照してください。
+
+0-RTTデータのパラメータ(対称暗号、ALPNプロトコル等)は、PSKでのネゴシエーションの確立
+と同様です。early dataの暗号化に使用されるPSKは、クライアントの"pre_shared_key"拡張の
+リストの最初のPSKでなければなりません[MUST]。
+
+NewSessionTicketにより提供されたPSKでは、サーバは選択したPSKのID
+(PskIdentity.obfuscated_ticket_ageを2^32でモジュロ演算した結果とticket_age_addとの差分
+によって計算されるもの)の寿命が許容範囲内であることを検証しなければなりません[MUST]
+(Section 8参照)。許容範囲内ではなかった場合、サーバは0-RTTを拒否し、ハンドシェイクを継
+続するべきで[SHOULD]、ClientHelloが新しいものであると前提した、他の挙動を行うべきでは
+ありません。
+
+最初に送信される0-RTTメッセージは、他の送信のものと同じ暗号化されたコンテントタイプを
+持っていますが、別の鍵によって暗号化されています。サーバのFinishメッセージを受信した
+後、サーバがearly dataを受け付けている場合、鍵交換を通知するためにEndOfEarlyDataメッセ
+ージが送信されます。このメッセージは0-RTTの鍵によって暗号化されています。
+
+"early_data"拡張を受信したサーバは、次の3つから1つの振る舞いを行わなければなりません[MUST]。
+
+ - 拡張を無視し、正規の1-RTTの応答を行う。サーバは受信したearly dataのレコードの復号を
+   無視した時、正規の1-RTTハンドシェイクを完了するまで、レコードの復号失敗をmax_early_data_size
+   までスキップすることができます。
+
+ - クライアントに対して、別のClientHelloをHelloRetryRequestにより要求します。クライア
+   ントはこのHelloRetryRequestに対するClientHelloに"early_data"拡張を含めてはいけませ
+   ん[MUST]。サーバは"application_data"タイプの他のコンテントタイプのすべてのレコード
+   (暗号化されて通知されます)をスキップすることで、early dataを無視します。
+
+ - EncryptedExtensionsにこの拡張を返却し、early dataによる通信を行うことを通知します。
+   サーバはearly dataメッセージを部分的に受け取ることはできません。サーバがearly data
+   を受け入れるメッセージを生成して送信した時点で、early dataメッセージがすでに送信済
+   みである可能性があります。
+
+early dataを受け入れるためには、サーバはPSKの暗号スイートを受け付け、クライアントの
+"pre_shared_key"拡張の要求を選択しなければなりません[MUST]。加えて、チケットが確立して
+いる間に、次の値がネゴシエーションと矛盾がないことを検証しなければなりません[MUST]。
+
+ - TLSバージョンと暗号スイート
+
+ - もしある場合、選択されたALPNプロトコル[RFC7301]
+
+さらに拡張が0-RTT間で定義されている必要があります[MUST]。
+
+これらのチェックが失敗した場合、サーバは拡張を返してはならず[MUST NOT]、前述されている
+の2つのメカニズムのどちらかによる最初のフライトデータをすべて破棄しなければなりません(
+つまり1-RTTまたは2-RTTにフェイルバックします)。クライアントが0-RTTハンドシェイクを試み、
+サーバが拒否した場合、サーバは通常0-RTTレコード保護鍵を持っておらず、最初の0-RTT以外の
+メッセージを見つけるために、復号を試みます(1-RTTハンドシェイク鍵を使用するか、
+HelloRetryRequestのケースでの平文のClientHelloを探します)
+
+サーバが"early_data"拡張を受け入れることを選択した場合、early dataレコードのエラーハン
+ドリングにおいて同じ挙動を行うことが要求されます。特に、サーバが"early_data"拡張後の
+0-RTTレコードの復号に失敗した場合、Section 5.2にあるように、"bad_record_mac"アラートに
+よりコネクションを終了しなければなりません[MUST]。
+
+サーバが"early_data"拡張を拒否した場合、クライアントアプリケーションはハンドシェイクの
+完了後にearly dataの再送を選択することができます[MAY]。自動的にearly dataを再送すると
+コネクション状態が正しくない可能性があることに注意してください。例えば、early dataを使
+った時と別のALPNプロトコルをネゴシエーションで選択している時、アプリケーションは異なる
+メッセージを構築する必要があります。同じように、early dataとコネクションの状態により、
+ハンドシェイクの完了後にエラーが送信される可能性があります。
+
+TLSの実装は自動的にearly dataを再送するべきではありません[SHOULD NOT]。アプリケーション
+自身により、再送すべきか決定します。TLSの実装は同じALPNプロトコルを選択したコネクション
+出ない限り、自動的にearly dataを再送してはなりません[MUST NOT]。
+
+
+4.2.10. Pre-Shared Key Extension
+"pre_shared_key"拡張は、PSK鍵の確立のためのハンドシェイクに利用する事前共有鍵を通知するために使用されます。
+
+この拡張の"extension_data"フィールドは"PreSharedKeyExtension"値を格納しています。
+
+    struct {
+        opaque identity<1..2^16-1>;
+        uint32 obfuscated_ticket_age;
+    } PskIdentity;
+
+    opaque PskBinderEntry<32..255>;
+
+    struct {
+        select (Handshake.msg_type) {
+            case client_hello:
+                PskIdentity identities<7..2^16-1>;
+                PskBinderEntry binders<33..2^16-1>;
+
+            case server_hello:
+                uint16 selected_identity;
+        };
+
+    } PreSharedKeyExtension;
+
+
+ identity
+  キーのラベルです。例として、Appendix B.3.4に定義されているチケットや、外部で確立した
+  事前共有鍵のラベルになります。
+
+ obfuscated_ticket_age
+  難読化された鍵の寿命です。Section 4.2.10.1に、NewSessionTicketメッセージを通して同一
+  性を確認するための、この値の形式について述べられています。外部で確立されたものについ
+  ては、0が使われるべきで[SHOULD]、サーバは値を無視しなければなりません[MUST]。
+
+ identities
+  クライアントがサーバとのネゴシエーションで用いるIDのリストです。"early_data"拡張
+  (Section 4.2.9参照)に付随して送信される場合、最初のIDが0-RTTデータに利用されます。
+
+ binders
+  "pre_shared_keys"拡張によって要求された各PSKのHMAC値のセットで、要求されたものと同じ
+  順番で並んでいます。計算方法は以降に記述します。
+
+ selected_identity
+  クライアントのリストからサーバが選択したIDのインデックスです(0から開始されます)。
+
+各PSKは単一のハッシュアルゴリズムに関連しています。チケットメカニズム(Section 4.6.1)に
+よって確立されたPSKは、チケットが確立されたコネクションのKDFハッシュアルゴリズムです。
+外部によって確立されたPSKは、ハッシュアルゴリズムをPSKが確立された時に設定するか、ハッ
+シュアルゴリズムが定義されない場合は、デフォルトのSHA-256に設定されなければなりません[MUST]。
+サーバは、選択したPSK(あれば)と暗号スイートに矛盾がないことを保証しなければなりません。
+
+実装者の注意:PSK/cipherの暗号スイートのマッチング要求の実装で最も率直な方法は、暗号ス
+イートを最初にネゴシエートし、互換性のないPSKを排除することです。どのような不明なPSK
+も(つまり、PSKデータベースにない、または不明な鍵によって暗号化されている)、単純に無視
+されるべきです[SHOULD]。受け付けられないPSKが見つかった場合、サーバは可能であれば非PSK
+のハンドシェイクを行うべきです[SHOULD]。
+
+PSK鍵の確立を受け付ける前に、サーバはbinder値との一致を検証しなければなりません[MUST]
+(Section 4.2.10.2以降を参照)。この値がない、または有効ではない場合、サーバはハンドシェ
+イクを破棄しなければなりません[MUST]。サーバは複数のbinderでの検証はすべきではありま
+せん[SHOULD NOT]。むしろ、単一のPSKを選択し、PSKに合った単独のbinderを検証すべきです[SHOULD]。
+PSK鍵の確立を受け付けた時、サーバは選択したIDを"pre_shared_key"拡張で通知します。
+
+クライアントは、サーバのselected_identityが提供した範囲のものであること、サーバが選択
+した暗号スイートに関連したPSKのハッシュが通知されていること、ClientHelloの
+"psk_key_exchange_modes"で要求された場合、サーバの"key_share"拡張があること、を確認し
+なければなりません[MUST]。これらの値に矛盾がある場合、クライアントは"illegal_parameter"
+アラートによりハンドシェイクを破棄しなければなりません[MUST]。
+
+サーバが"early_data"拡張を提供している場合、クライアントはサーバのselected_identityが
+0であることを検証しなければなりません[MUST]。0以外の値であった場合、クライアントは
+"illegal_parameter"アラートによりハンドシェイクを破棄しなければなりません[MUST]。
+
+この拡張はClientHelloの最後尾になければなりません[MUST](これは後述にあるように、実装を
+容易にするためのものです)。サーバは拡張の最後尾であることをチェックしなければならず[MUST]、
+最後尾ではなかった場合、"illegal_parameter"アラートによりハンドシェイクを破棄しなけれ
+ばなりません[MUST]。
+
+
+4.2.10.1. Ticket Age
+クライアントにおいて、チケットの寿命はNewSessionTicketメッセージを受信してからの時間
+になります。クライアントは"ticket_lifetime"を超えたチケットを利用してはなりません[MUST NOT]。
+PskIdentityの"obfuscated_ticket_age"フィールドは、ミリ秒の寿命にチケットに含まれた
+"ticket_age_add"値を加算した形式の難読化されたチケットの寿命を格納しています。2^32の
+モジュロ演算についてはSection 4.6.1を参照してください。この加算は観測者がチケット無し
+にコネクションの再利用を行うことを妨害します。NewSessionTicketメッセージの
+"ticket_lifetime"フィールドは秒単位ですが、"obfuscated_ticket_age"はミリ秒ということ
+に注意してください。これは、チケットの寿命が1週間に制限されているため、ミリ秒でも32bit
+で十分です。
+
+
+4.2.10.2. PSK Binder
+PSK binder値は、PSKが生成されたハンドシェイク(NewSessionTicketメッセージによる場合)と
+それが利用されたハンドシェイク間と同様に、PSKと現在のハンドシェイク間に関連づいて形成
+されます。binderリストの各エントリはClientHelloからPreSharedKeyExtension.identitiesフィ
+ールドまでの部分をハッシュとしたHMACを計算したものです。これは、ClientHelloのすべてを
+含んだものですが、binderリスト自身は含まれていません。メッセージの長さのフィールド(全
+体長、拡張ブロック長、"pre_shared_key"拡張の長さ)はbinderがすべて存在するとして決定さ
+れます。
+
+PskBinderEntryはFinishメッセージ(Section 4.4.4)と同様の方法で計算されますが、binder_key
+であるBaseKeyは、要求されたPSKに一致するキースケジュールにより導出されます(Section 7.1
+参照)。
+
+ハンドシェイクがHelloRetryRequestを含んでいる場合、初回のClientHelloとHelloRetryRequest
+は新しいClientHelloの複写を含んでいます。例えば、クライアントがClientHello1を送信した
+場合、このbinderは次のように計算されます。
+
+    Transcript-Hash(ClientHello1[truncated])
+
+サーバがHelloRetryRequestを応答し、クライアントがClientHello2を送信した場合、このbinder
+は次のように計算されます。
+
+    Transcript-Hash(ClientHello1,
+                    HelloRetryRequest,
+                    ClientHello2[truncated])
+
+ClientHello1の全てが、他のハンドシェイクのハッシュ計算に含まれることになります。初回
+フライトでは、ClientHello1[truncated]のハッシュが直接利用されますが、2回目のフライト
+では、Section 4.4.1にあるように、ClientHello1が"handshake_hash"メッセージとして再演算
+されます。
+
+
+4.2.10.3. 処理順番
+クライアントはサーバのFinishを受け取るまで、0-RTTデータの"stream"が許可されており、
+ハンドシェイクの切れ目で、EndOfEarlyDataメッセージを送信します。デッドロックを避ける
+ため、"early_data"を受け取った時は、サーバはクライアントのClientHelloを受信後、
+クライアントからのEndOfEarlyDataを待つのではなく、即時にServerHelloを送信しなければ
+なりません[MUST]。
+
 
 
 続く
