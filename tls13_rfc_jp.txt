@@ -2005,6 +2005,70 @@ ClientHello1の全てが、他のハンドシェイクのハッシュ計算に�
 なりません[MUST]。
 
 
+4.3. サーバパラメータ
+EncryptedExtensionsおよびCertificateRequestの2つのサーバからのメッセージは、ハンドシェ
+イクの停止の情報を含んでいます。これらのメッセージは、server_handshake_traffic_secret
+によって導出された鍵によって暗号化されています。
+
+
+4.3.1. Encrypted Extensions
+すべてのハンドシェイクにおいて、サーバはServerHelloメッセージの後からEncryptedExtensions
+メッセージを送信しなければなりません[MUST]。これがserver_handshake_traffic_secretによ
+って導出された鍵で暗号化された最初のメッセージになります。
+
+EncryptedExtensionsメッセージは保護されている拡張を含んでいます。つまり、暗号文を確立
+するためには必要ないものではありますが、個別の証明書とは関連付けられてはいないものです。
+クライアントは受け取ったEncryptedExtensionsが禁止されている拡張でないことをチェックし
+なければならず[MUST]、禁止されている拡張を見つけた場合、"illegal_parameter"アラートに
+よりハンドシェイクを破棄しなければなりません。
+
+EncryptedExtensionsメッセージの構造:
+
+    struct {
+        Extension extensions<0..2^16-1>;
+    } EncryptedExtensions;
+
+ extensions
+  拡張のリスト。詳細はSection 4.2の表を参照してください。
+
+
+4.3.2. Certificate Request
+クライアントを認証しようとするサーバは、クライアントからの証明書を要求することができま
+す[MAY]。このメッセージを送信する場合、EncryptedExtensionsの後に送信しなければなりませ
+ん[MUST]。
+
+CertificateRequestメッセージの構造:
+
+    struct {
+        opaque certificate_request_context<0..2^8-1>;
+        Extension extensions<2..2^16-1>;
+    } CertificateRequest;
+
+ certificate_request_context
+  証明書要求および、クライアントからのCertificateメッセージの応答を識別するための
+  opaque配列形式のデータ。certificate_request_contextはコネクションのスコープ内でユニー
+  クでなければなりません[MUST](クライアントのCertificateVerifyメッセージのリプレイ攻撃
+  を防ぐためのものです)。このフィールドは、Section 4.6.2にあるハンドシェイク後の認証を
+  行わない場合は長さが0になります[SHALL]。ハンドシェイク後の認証を要求している時、サー
+  バは、攻撃者がクライアントのCertificateVerifyメッセージを事前に計算して算出したクライ
+  アントの一時鍵を持つことを防止するため、クライアントが予測できないコンテキスト(つまり
+  ランダムに生成したもの)を作るべきです[SHOULD]。
+
+ extensions
+  要求された証明書のパラメータを記載した拡張のセットです。"signature_algorithms"拡張は
+  必ず記載しなければならず[MUST]、他の拡張はこのメッセージが定義される場合に選択的に含
+  まれています。クライアントは解釈できない拡張については無視しなければなりません[MUST]。
+
+以前のバージョンのTLSにおいて、CertificateRequestメッセージは、署名アルゴリズムのリスト
+とサーバが受け付けるCA局を伝えるものでした。TLS 1.3では、前者は"signature_algorithms"拡
+張によって送信されるようになっており、後者は"certificate_authorities"拡張(Section 4.2.4
+参照)によって送信されます。
+
+PSKで認証を行うサーバは、メインのハンドシェイクにおいてCertificateRequestメッセージを送
+信してはならないため[MUST NOT]、クライアントが提供した"post_handshake_auth"拡張(Section
+4.2.5参照)によるハンドシェイク後の認証でCertificateRequestメッセージを送信することがで
+きます[MAY]。
+
 
 続く
 
