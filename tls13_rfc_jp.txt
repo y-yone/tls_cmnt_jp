@@ -2070,6 +2070,258 @@ PSKで認証を行うサーバは、メインのハンドシェイクにおい�
 きます[MAY]。
 
 
-続く
+4.4. 認証メッセージ
+Section 2で論じたように、TLSは通常、認証・鍵の確認・ハンドシェイクの完了のための共通のメッ
+セージセット(Certificate・CertificateVerify・Finish)を使用します(PreSharedKeyのbinderも
+また同じように鍵の確認を行います)。これらの3つのメッセージは、いつもハンドシェイクの最後
+のメッセージとして送信されます。CertificateおよびCertificateVerifyメッセージは後述で定義
+されるように、特定の状況下でのみ送信されます。Finishedメッセージは必ず認証ブロックの最後
+として送信されます。これらのメッセージは[sender]_handshake_traffic_secretから導出される
+鍵で暗号化されています。
 
+Authenticationメッセージの計算は、すべて一律に次の入力によって算出されます。
+
+ - 証明書および署名に利用される鍵
+
+ - 複写ハッシュに含まれているメッセージセットで構成されるハンドシェイクのコンテキスト
+
+ - MAC鍵の計算に使用されるベース鍵
+
+これらの入力で、次のメッセージが構成されます。
+
+ Certificate
+  認証に利用される証明書および、証明書チェインでサポートされている証明書。証明書に基づい
+  たクライアント認証は0-RTTモードではないことに注意してください。
+
+ CertificateVerify
+  複写ハッシュ(ハンドシェイクコンテキスト、Certificate)によるシグネチャ。
+
+ Finished
+  ベース鍵により導出したMAC鍵を利用した、複写ハッシュ(ハンドシェイクコンテキスト、Certificate、
+  CertificateVerify)によるMAC。
+
+次の表は各シナリオにおけるハンドシェイクコンテキストとMAC Base Keyを定義したものです。
+
+
+   +-----------+----------------------------+--------------------------+
+   | Mode      | Handshake Context          | Base Key                 |
+   +-----------+----------------------------+--------------------------+
+   | Server    | ClientHello ... later of E | server_handshake_traffic |
+   |           | ncryptedExtensions/Certifi | _secret                  |
+   |           | cateRequest                |                          |
+   |           |                            |                          |
+   | Client    | ClientHello ... later of   | client_handshake_traffic |
+   |           | server                     | _secret                  |
+   |           | Finished/EndOfEarlyData    |                          |
+   |           |                            |                          |
+   | Post-     | ClientHello ... client     | client_application_traff |
+   | Handshake | Finished +                 | ic_secret_N              |
+   |           | CertificateRequest         |                          |
+   +-----------+----------------------------+--------------------------+
+
+
+4.4.1. 複写ハッシュ
+TLSの多くの暗号演算では、複写ハッシュ(transcript hash)の使用しています。この値は、各ハン
+ドシェイクメッセージ、ハンドシェイクメッセージヘッダ、ハンドシェイクメッセージタイプ、フィ
+ールド長を連結したもの(レコードレイヤーのヘッダは含めません)からハッシュを計算したものです。
+つまり、
+
+    Transcript-Hash(M1, M2, ... MN) = Hash(M1 || M2 ... MN)
+
+通常のルールの例外として、サーバがHelloRetryRequestに対するClientHelloを応答した時、
+ClientHello1はHash(ClientHello1)を含んだ、"message_hash"タイプの特殊なハンドシェイクメッセ
+ージに置き換わります。
+
+    Transcript-Hash(ClientHello1, HelloRetryRequest, ... MN) =
+        Hash(message_hash ||        // Handshake type
+             00 00 Hash.length ||   // Handshake message length
+             Hash(ClientHello1) ||  // Hash of ClientHello1
+             HelloRetryRequest ... MN)
+
+この構造の理由は、中間ハッシュの状態全体(Section 4.2.2参照)のエクスポートを要求するのではな
+く、サーバがcookieにClientHello1のハッシュのみを入れたステートレスなHelloRetryRequestを行え
+るようにするためです。
+
+具体的に、複写ハッシュは毎回、ClientHelloから始まる次の送信したメッセージ(ClientHello、
+HelloRetryRequest、server CertififateRequest、server Certificate、server Certificate、server
+CertificateVerify、server Finished EndOyDarlyData、client Certificate、client CertificateVerify
+client Finish)ハンドシェイクメッセージのシーケンスから計算されます。
+
+一般的に実装はネゴシエーションハッシュに基づいた複写ハッシュを行いながら、複写を行うことが
+できます。しかしながら、ハンドシェイク後の認証を行った場合は、ハンドシェイクの終わりまでの
+メッセージのみとなることに注意してください。
+
+
+4.4.2. Certificate
+このメッセージはピアにエンドポイントの証明書チェインを送るものです。
+
+サーバは鍵交換で認証に証明書を利用する方式の時は、Certificateメッセージを送信しなければなり
+ません[MUST](このドキュメンにおいてPSKを除くすべての鍵交換方式がこの方式です)。
+
+クライアントはサーバがCertificateRequestメッセージ(Section 4.3.2)によってクライアント認証を
+要求してきた場合に限り、Certificateメッセージを送信しなければなりません[MUST]。サーバがクラ
+イアント認証を要求したが合う証明書を所持していない場合、クライアントは証明書を含まないCertificate
+メッセージを送信しなければなりません[MUST](つまり、"certificate_list"フィールド長が0ものに
+なります)。
+
+Certificateメッセージの構造:
+
+    struct {
+        select(certificate_type){
+            case RawPublicKey:
+              // From RFC 7250 ASN.1_subjectPublicKeyInfo
+              opaque ASN1_subjectPublicKeyInfo<1..2^24-1>;
+
+            case X509:
+              opaque cert_data<1..2^24-1>;
+        };
+        Extension extensions<0..2^16-1>;
+    } CertificateEntry;
+
+    struct {
+        opaque certificate_request_context<0..2^8-1>;
+        CertificateEntry certificate_list<0..2^24-1>;
+    } Certificate;
+
+ certificate_request_context
+  CertificateRequestに対する応答をこのメッセージで行う場合、Certificateメッセージの値は、
+  certificate_request_contextになります。他の場合(サーバ認証のケースでは)、このフィールド
+  は0になります[SHALL]。
+
+ certificate_list
+  CertificateEntry構造体のチェインです。各要素は、一つの証明書と拡張のセットが含まれていま
+  す。
+
+ extensions
+  CertificateEnctryの拡張のセットです。"Extension"フォーマットはSection 4.2に定義されてい
+  ます。有効な拡張は、OCSP Status拡張([RFC6066]および[RFC6961])とSignedCertificateTimestamps
+  ([RFC6962])です。拡張は、初回ハンドシェイクにあるClientHello拡張に対応する、Certificate
+  メッセージ内になければなりません[MUST]。拡張をチェイン全体に適用する場合、最初のCertificateEntry
+  に含まれているべきです[SHOULD]。
+
+一致する証明書タイプの拡張が使われていない("server_certificate_type"または"client_certificate_type")、
+またはX.509形式の証明書でネゴシエーションされた場合、各CertificateEntryはX.509証明書が格納
+されます。送信者の証明書はリストの最初のCertificateEntryで来なければなりません[MUST]。続く
+各証明書は一つ前のものを直接証明するものであるべきです[SHOULD]。これは、証明書の検証は各ト
+ラストアンカーが独立して配信されて行うことが要求されているため、サポートしているピアから提
+供された証明書が省略された証明書であるとわかっている場合、特定のトラストアンカーの証明書は
+チェインから省略される場合があります[MAY]。
+
+注意:TLS 1.3以前では、"certificate_list"の順序は直前の証明書を証明することが要求されていま
+した。しかし、一部の実装では順序を入れ替えることもありました。サーバは過渡的な移行のために
+現在のものと推奨されないものの両方を送信することもありますが、この他の場合は単純な設定の誤
+りです。互換性を高めるため、すべての実装はチェインとは関係ない証明書の処理や、どのTLSバー
+ジョンの順序のものでも扱えるようにすべきです[SHOULD]。ただし、エンドエンティティ証明書だけ
+はチェインの最初になければなりません[MUST]。
+
+RawPublicKeyタイプの証明書がネゴシエーションされた場合、certificate_listは[RFC7250]のSection 3
+に定義されている、ASN1_subjectPublicKeyInfoを持つCertificateEntyを一つのみしか含んではなり
+ません[MUST]。
+
+[RFC6091]のOpenPGPタイプの証明書はTLS 1.3では使用してはなりません[MUST NOT]。
+
+サーバのcertificate_listは必ず空ではないものでなければなりません[MUST]。クライアントは、サ
+ーバの認証要求に対する応答の証明書について、適合する証明書を所持していない場合は、空の
+certificate_listを送信します。
+
+
+4.4.2.1. OCSP Status および SCT Extensions
+[RFC6066]および[RFC6961]はサーバがOCSP応答をクライアントとネゴシエーションするための拡張を
+提供しています。TLS 1.2およびそれ以前では、サーバはこの拡張の対応の通知に空の拡張を応答し、
+OCSP情報はCertificateStatusメッセージで伝えていました。TLS 1.3では、サーバのOCSP情報は、関
+連する証明書を含んだCertificateEntryの拡張によって伝えます。具体的に、サーバの"status_request"
+拡張のボディ部は[RFC6960]の定義として解釈される、[RFC6066]で定義のCertificateStatus構造体
+でなければなりません[MUST]。
+
+同様に、[RFC6962]はTLS 1.2以前でサーバがServerHelloの拡張として、Signed Certificate Timestamp(SCT)
+を送信するメカニズムを提供しています。TLS 1.3では、サーバのSCT情報はCertificateEntry拡張で
+伝えられます。
+
+
+4.4.2.2. サーバ証明書の選択
+次の規則によって、サーバから証明書が送信されます。
+
+ - 証明書のタイプは、明示的に折衝が行われない限り([RFC7250]によるもの)、X.509v3 [RFC5280]
+   でなければなりません[MUST]。
+
+ - サーバのエンドエンティティ証明書の公開鍵(および関連する制限)は、選択された認証アルゴリ
+   ズムに合うものでなければなりません[MUST](現状は、RSA、ECDSAまたはEdDSA)。
+
+ - 証明書は、クライアントの"sigunature_algorithms"拡張で通知された署名方式で署名された鍵
+   (つまり、デジタル署名ビットはKey Usage拡張がある場合、設定されなければなりません)を受
+   け付けなければなりません。
+
+ - "server_name"および"certificate_authorities"拡張[RFC6066]は証明書の選択に利用されます。
+   サーバが"server_name"拡張を要求する場合があるため、クライアントは可能であれば、この拡
+   張を送信すべきです[SHOULD]。
+
+サーバによって提供されたすべて証明書は、証明書チェインを提供できる場合、クライアントが提
+供した"signature_algorithms"拡張にある署名アルゴリズムによって署名されていなければなりま
+せん[MUST](Section 4.2.3参照)。自己証明書あるいは、信頼するトラストアンカーの証明書はチェ
+インの一部として認証されず、どのアルゴリズムでも署名されている可能性があります。
+
+サーバが通知したサポートしているアルゴリズムのみの証明書チェインを提供できない場合、クラ
+イアントがサポートしているか不明な証明アルゴリズムを含んでいるかもしれない証明書チェイン
+をクライアントへ送信し、ハンドシェイクを継続すべきです[SHOULD]。このフォールバックチェイ
+ンでは、通常SHA-1ハッシュアルゴリズムを含めるべきではありませんが[SHOULD NOT]、
+"signature_algorithms"拡張によってクライアントから許可されている場合は行ってもよく[MAY]、
+それ以外は行ってはなりません[MUST]。
+
+クライアントは、提供された証明書のチェインを構築できない場合やハンドシェイクを破棄するこ
+とを決めた場合は、証明書に関連したアラート(デフォルトでは、"unsupported_certificate";
+Section 6.2等を参照)によってハンドシェイクを破棄しなければなりません。
+
+サーバが複数の証明書を持っている場合、上記の基準で一つの証明書を選択します(他の基準とし
+ては、TCPレイヤーのエンドポイントのローカル設定があります)
+
+
+4.4.2.3. クライアント証明書の選択
+次の規則によって、クライアントから証明書が送信されます。
+
+ - 証明書のタイプは、明示的に折衝が行われない限り([RFC7250]によるもの)、X.509v3 [RFC5280]
+   でなければなりません[MUST]。
+
+ - CertificateRequestメッセージに"certificate_authorities"拡張がある場合、証明書チェイン
+   の少なくとも一つの証明書は、CAリストの内のいずれかから発行されたものであるべきです[SHOULD]。
+
+ - Section 4.3.2にあるように、証明書は受付可能な署名アルゴリズムで署名されなければなりませ
+   ん[MUST]。証明書の署名アルゴリズムに関する規制の緩和は、前のバージョンのTLSに見られるも
+   ののため注意してください。
+
+ - 空ではない"oid_filters"拡張を含むCertificateRequestメッセージの場合、エンドエンティティ
+   証明書はSection 4.2.4.1にあるように、クライアントによって認識される拡張OIDと一致しなけ
+   ればなりません[MUST]。
+
+サーバ証明書では、現在のTLSでは使えないアルゴリズムの組み合わせが利用されるものがあること
+に注意してください。
+
+
+4.4.2.4. Certificateメッセージの受信
+通常、証明書の検証処理についてはTLSのスコープ外です([RFC5280]参照)。このセクションでは、
+TLS特有のものについて提供します。
+
+サーバが空のCertificateメッセージを提供した場合、クライアントは"decode_error"アラートによ
+りハンドシェイクを破棄しなければなりません[MUST]。
+
+クライアントが証明書を送信してこない場合、サーバはクライアント認証なしにハンドシェイクを継
+続するか、"certificate_require"アラートによりハンドシェイクを破棄するかを選択します[MAY]。
+証明書チェインが受け付けられない場合(つまり、信頼するCAに署名されたものでない場合))もまた、
+サーバはハンドシェイクを継続するか(クライアントは認証されてないとされます)、ハンドシェイク
+を破棄します。
+
+MD5ハッシュの署名が利用された証明書を受信したどのエンドポイントも、"bad_certificate"アラー
+トによりハンドシェイクを破棄しなければなりません[MUST]。SHA-1は廃止予定であり、SHA-1を使用
+している証明書を受信したエンドポイントは、"bad_certificate"アラートによりハンドシェイクを
+破棄することが推奨されます[RECOMMENDED]。明確に記述すると、エンドポイントが自己証明書ある
+いはトラストアンカーの証明書の場合は、受け付けても構わないことを意味しています[MAY]。
+
+すべてのエンドポイントは、SHA-256へ移行するか、相互運用を維持しつつ可能な限り早くSHA-1サポ
+ートを廃止していくことが推奨されます[RECOMMENDED]。
+
+証明書の鍵の署名アルゴリズムとは、異なる署名アルゴリズムで署名されている可能性があることに
+注してください[MAY](例えば、ECDSA鍵で署名されたRSA鍵など)。
+
+
+
+続く
 
