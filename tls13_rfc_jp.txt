@@ -2509,5 +2509,80 @@ CertificateVerifyメッセージの受信者は、signatureフィールドを検
 クを破棄しなければなりません[MUST]。
 
 
+4.4.4. Finished
+Finishedメッセージは認証ブロックの最後のメッセージです。このメッセージ
+はハンドシェイクと鍵の計算の認証を提供するために必須のものです。
+
+Finishedメッセージの受信者は、その内容が正しいことを検証しなければなら
+ず[MUST]、正しくない場合は"decrypt_error"アラートによりコネクションを
+終了しなければなりません[MUST]。
+
+一方のサイドからFinishedメッセージが送信され、ピア側でFinishedメッセー
+ジの受信と検証が行われると、コネクション間でアプリケーションデータの送
+受信が開始されます。ピア側のFinished前にデータの送信を行える場合は、次
+の2通りあります。
+
+ 1.クライアントがSection 4.2.9にある0-RTTデータを送信し終えていること。
+
+ 2.サーバは最初のネゴシエーションパケット送信後にデータを送信する場合
+   がありますが、ハンドシェイクが完了していないためピア側の同一性も生
+   存も保証されていません(つまりClientHelloが再送される可能性がありま
+   す)。
+
+Finishedメッセージの演算で使用する鍵は、Section 4.4で定義されている
+HKDF(Section 7.1を参照)によるBase鍵から計算されます。
+詳細は次のとおりです。
+
+    finished_key =
+        HKDF-Expand-Label(BaseKey, "finished", "", Hash.length)
+
+Finishedメッセージ構造:
+
+    struct {
+        opaque verify_data[Hash.length];
+    } Finished;
+
+verify_data値は次のように計算されます。
+
+    verify_data =
+        HMAC(finished_key,
+             Transcript-Hash(Handshake Context,
+                             Certificate*, CertificateVerify*))
+
+    * 存在する場合のみ含みます。
+
+HMAC[RFC2104]はハンドシェイクのハッシュアルゴリズムを使用します。上記
+にあるように、HMACは通常実行時のハッシュによって実装されます。つまり、
+計算時点でのハンドシェイクのハッシュです。
+
+以前のTLSバージョンでは、verify_dataは必ず12オクテット長でした。TLS 1.3
+では、HMACのハッシュの出力長はハンドシェイクのハッシュのサイズです。
+
+注意:アラートおよびハンドシェイクメッセージ以外のレコードタイプは、ハ
+ッシュ計算の入力に含まれません。
+
+1-RTT Finishedメッセージ後のいかなるレコードも、Section 7.2の適切な
+application traffic keyによって暗号化されなければなりません[MUST]。特
+に、クライアントのCertificateやCertificateVerifyメッセージに対する、
+サーバの応答のアラートも含まれます。
+
+
+4.5. End of Early Data
+
+    struct {} EndOfEarlyData;
+
+サーバが"early_data"拡張を送信した場合、クライアントはサーバのFinished
+の受信後に、EndOfEarlyDataメッセージを送信しなければなりません[MUST]。
+サーバが"early_data"拡張を送信していない場合、クライアントはEndOfEarlyData
+メッセージを送信してはなりません[MUST NOT]。このメッセージはすべての
+0-RTTのapplication_dataメッセージを送信したことを通知するものであり、
+まだ送信するのもがあれば、handshake traffic keysによって保護されたレコ
+ードで継続されます。サーバはこのメッセージを送信してはならず[MUST NOT]、
+クライアントがこのメッセージを受信した場合は"unexpected_message"アラー
+トによってコネクションを終了しなければなりません[MUST]。このメッセージ
+はclient_early_traffic_secretにより導出された鍵によって暗号化されてい
+ます。
+
+
 続く
 
