@@ -2110,14 +2110,14 @@ CertificateRequestメッセージの構造:
  certificate_request_context
   証明書要求および、クライアントからのCertificateメッセージの応答を識
   別するための  opaque配列形式のデータ。certificate_request_contextは
-  コネクションのスコープ内でユニー  クでなければなりません[MUST](クラ
-  イアントのCertificateVerifyメッセージのリプレイ攻撃  を防ぐためのも
-  のです)。このフィールドは、Section 4.6.2にあるハンドシェイク後の認証
-  を行わない場合は長さが0になります[SHALL]。ハンドシェイク後の認証を要
-  求している時、サーバは、攻撃者がクライアントのCertificateVerifyメッ
-  セージを事前に計算して算出したクライアントの一時鍵を持つことを防止す
-  るため、クライアントが予測できないコンテキスト(つまりランダムに生成
-  したもの)を作るべきです[SHOULD]。
+  コネクションのスコープ内でユニークでなければなりません[MUST](クライ
+  アントのCertificateVerifyメッセージのリプレイ攻撃  を防ぐためのもの
+  です)。このフィールドは、Section 4.6.2にあるハンドシェイク後の認証を
+  行わない場合は長さが0になります[SHALL]。ハンドシェイク後の認証を要求
+  している時、サーバは、攻撃者がクライアントのCertificateVerifyメッセ
+  ージを事前に計算して算出したクライアントの一時鍵を持つことを防止する
+  ため、クライアントが予測できないコンテキスト(つまりランダムに生成し
+  たもの)を作るべきです[SHOULD]。
 
  extensions
   要求された証明書のパラメータを記載した拡張のセットです。"signature_algorithms"
@@ -2682,6 +2682,77 @@ ticket_nonce値は各NewSessionTicketメッセージで異なっているため�
 マテリアルのトータルの寿命に制限を設定することを推奨します。これらの制
 限は、ピア側の証明書の寿命、証明書の失効の可能性、ピアのオンラインの
 CertificateVerify署名からの時間を考慮すべきです。
+
+
+4.6.2. Post-Handshake Authentication
+クライアントが"post_handshake"拡張(Section 4.2.5参照)を送信した時、サ
+ーバはハンドシェイク完了後であればどのタイミングでもCertificateRequest
+メッセージを送信することでクライアントに認証を要求することができます[MAY]。
+クライアントは、適切なAuthenticationメッセージを応答しなければなりませ
+ん[MUST](Section 4.4参照)。クライアントが認証することを選択した場合、
+Certificate、CertificateVerify、Finishedメッセージを送信しなければなa
+りません[MUST]。クライアントが認証を拒否した場合、証明書を含まない
+Certificateと、続けてFinishedメッセージを送信しなければなりません[MUST]。
+すべてのクライアントの応答メッセージでは、間に他のタイプのメッセージを
+含まずに、連続でなければなりません[MUST]。
+
+"post_handshake_auth"拡張の送信がないCertificateRequestメッセージを受
+信したクライアントは、"unexpected_message"のFATALアラートを送信しなけ
+ればなりません[MUST]。
+
+注意:クライアント認証はユーザの入力が必要となるため、サーバは
+CertiricateRequestの送信と応答の受信の間に、他のメッセージを受信するな
+ど、遅延があることを想定しておかなければなりません[MUST]。加えて、短期
+間で複数のCertificateRequestを受信したクライアントは、受信した順序とは
+異なる順番で応答を返すことができます[MAY](サーバはcertificate_request_context
+値よって応答を識別することができます)。
+
+
+4.6.3. 鍵と初期ベクトル(IV)の更新
+
+    enum {
+        update_not_requested(0), update_requested(1), (255)
+    } KeyUpdateRequest;
+
+    struct {
+        KeyUpdateRequest request_update;
+    } KeyUpdate;
+
+ request_update
+  KeyUpdateの受信者が、自身のKeyUpdateで応答すべきかどうかを通知します。
+  実装において他の値を受信した場合、"illegal_parameter"アラートにより
+  コネクションを終了しなければなりません[MUST]。
+
+KeyUpdateハンドシェイクメッセージは、送信者が暗号鍵を更新したことを通
+知します。このメッセージはピアのどちらかがFinishedメッセージを送信した
+後に送信することができます。実装において、Finishedメッセージの前にKeyUpdate
+メッセージを受信した場合、"unexpected_message"アラートによりコネクショ
+ンを終了しなければなりません[MUST]。KeyUpdateメッセージの送信後は、送
+信者はすべての通信を、Section 7.2に記述した計算方法で生成した、次の鍵
+を利用して行うことになります[SHALL]。KeyUpdateを受信してから、受信者は
+受信鍵を更新しなければなりません[MUST]。
+
+request_updateフィールドに"update_requested"が設定されている場合、受信
+者は次のアプリケーションデータレコードを送信する前に、request_updateフィ
+ールドに"update_not_requested"を設定したKeyUpdateを送信しなければなり
+ません[MUST]。このメカニズムにより、どちら側でもコネクション全体を強制
+的に更新することができますが、複数のKeyUpdateを受信した時に、応答せず
+に単一の更新を行うような実装になります。実装では、request_updateに
+update_requestedを設定したKeyUpdateの送信と、ピアのKeyUpdateの受信の間
+に、ピアがKeyUpdate受診前から既に送信されている、メッセージを受信する
+可能性があることに注意してください。しかし、送受信の鍵は独立した
+traffic secretから導出されているため、受信側のtraffic secretを保持して
+いても、送信者が鍵を更新する前に送信されたデータのforward secrecy性は
+脅かされません。
+
+実装において、request_updateに"update_requested"を設定したKeyUpdateを
+それぞれが送信し、ネゴシエーションで交錯した場合、各側のそれぞれで応答
+を送信するため、結果、各側で2世代分進みます。
+
+送信者と受信者の両方は、古い方の鍵でKeyUpdateを暗号化しなければなりま
+せん[MUST]。加えて、両者共に、新しい鍵によるメッセージを受け付ける前に
+古い鍵によるKeyUpdateを受信することが強制されます[MUST]。これを行わな
+ければメッセージが切り捨てられる攻撃が発生する可能性があります。
 
 
 続く
