@@ -2855,5 +2855,102 @@ alertの3つのタイプのコンテントについて述べています。実�
 は暗号化され、以降のセクションに記載されているように送信されます。
 
 
+5.2. レコードペイロードの保護
+レコード保護機能は、TLSPlaintext構造をTLSCiphertextへ変換します。保護
+を解くには、逆のプロセスを行います。TLS 1.3では、前のTLSバージョンとは
+異なり、すべての暗号は"Authenticated Encryption with Additional Data"
+(AEAD)[RFC5116]の方式となっています。AEAD方式では、暗号化と認証を、暗
+号および復号時に同時に行います。各暗号レコードは、平文のヘッダに続いて、
+タイプと任意のパディングを含んで暗号化されたボディ部で構成されます。
+
+    struct {
+        opaque content[TLSPlaintext.length];
+        ContentType type;
+        uint8 zeros[length_of_padding];
+    } TLSInnerPlaintext;
+
+    struct {
+        ContentType opaque_type = 23; /* application_data */
+        ProtocolVersion legacy_record_version = 0x0301; /* TLS v1.x */
+        uint16 length;
+        opaque encrypted_record[length];
+    } TLSCiphertext;
+
+ content
+  送信する暗号化されたハンドシェイクまたはアラート、アプリケーションデ
+  ータのバイト。
+
+ type
+  レコードのタイプ。
+
+ zeros
+  任意の長さにするために、クリアテキストとタイプフィールドの後ろに追加
+  するゼロ値です。これは、送信者がTLSレコードにパディングする機能を提
+  供し、レコードサイズの限界まで拡張できるようサイズを選択することがで
+  きます。詳細はSection 5.4を参照してください。
+
+ opaque_type
+  外側のTLSCiphertextレコードのopaque_typeフィールドは、中継装置が前の
+  TLSバージョンを変わらず処理できるように、必ず23(application_data)が
+  設定されます。実際のレコードのコンテントタイプは復号後のTLSInnerPlaintext.type
+  にあります。
+
+ legacy_record_version
+  legacy_recor_versionフィールドは必ず0x0301です。TLS 1.3のTLSCiphertext
+  はTLS 1.3でのネゴシエーション後までは生成されないため、他の値が受信
+  された場合の互換性の懸念はありません。実装では、legacy_recor_version
+  フィールドが0x0301でないか確認し、0x0301ではない場合はコネクションを
+  破棄してもよいです[MAY]。ハンドシェイクプロトコルはプロトコルバージョ
+  ンを認証するClientHelloとServerHelloメッセージを含んでいるため、この
+  値は冗長であることに留意してください。
+
+ length
+  TLSCiphertext.encrypted_recordのコンテントとパディング、内部のコンテ
+  ントタイプ、AEADアルゴリズムで追加された拡張を含めた合計の長さです。
+  長さは2^14+256バイトを超過してはなりません[MUST NOT]。制限長を超えた
+  レコードを受信したエンドポイントは"record_overflow"アラートによりコ
+  ネクションを終了しなければなりません[MUST]。
+
+ encrypted_record
+  TLSInnerPlaintextの構造をシリアライズしたAEAD暗号データ。
+  
+AEADアルゴリズムは、[RFC5116]のSection 2.1に記載されているように、入力
+として単一の鍵、nonce、平文、認証確認となる"additional data"をとります。
+鍵はclient_write_keyあるいはserver_write_keyのいずれかで、nonceはシー
+ケンス番号(Section 5.3参照)とclient_write_ivまたはserver_write_ivから
+導出したもの、addtional dataの入力は空(長さ0)です。Section 7.3にtraffic key
+の導出を定義しています。
+
+AEADアルゴリズムの平文の入力は、TLSInnerPlaintext構造にエンコードした
+データです。
+
+AEADの出力は、AEAD暗号処理の出力である暗号文で構成されています。平文の
+長さは、TLSInnerPlaintext.typeとパディングを含むため、対応する
+TLSPlaintext.lengthよりも大きくなります。AEADの出力長は平文よりも大き
+くなりますが、AEADアルゴリズムにより、どのくらい大きくなるかは不定です。
+暗号文はパディングを含むため、オーバーヘッドの大きさは平文の長さが異な
+り、変化するためです。シンボルとして以下となります。
+
+    AEADEncrypted =
+        AEAD-Encrypt(write_key, nonce, plaintext)
+
+復号と検証には、暗号の入力として鍵、nonce、AEADEncrypted値をとります。
+出力からは、平文と復号失敗のエラー検知が得られます。整合性の確認は分離
+されていません。これは以下のようになります。
+
+    plaintext of encrypted_record =
+        AEAD-Decrypt(peer_write_key, nonce, AEADEncrypted)
+
+復号が失敗した場合、受信者は"bad_record_mac"アラートによりコネクション
+を終了しなければなりません[MUST]。
+
+TLS 1.3のAEADアルゴリズムは、255オクテットより大きく拡張してはなりませ
+ん[MUST NOT]。エンドポイントがピアから2^14+256オクテット以上の長さの
+TLSCiphertext.lengthを受信した場合、"record_overflow"アラートによりコ
+ネクションを終了しなければなりません。この制限はTLSPlaintext長の最大で
+ある2^14オクテット+ContentTypeの1オクテット+AEADの拡張の最大である255
+オクテットから導出されています。
+
+
 続く
 
