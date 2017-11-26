@@ -3276,5 +3276,142 @@ TLSハンドシェイクプロトコルのエラー操作は非常に単純で�
 当てられます。
 
 
+7. 暗号演算
+TLSハンドシェイクは下記に記載するように、キーマテリアルを生成するため
+1つ以上のシークレットを組み合わせを確立します。鍵の導出プロセスは入力
+シークレットとハンドシェイクトランスクリプトの両方を組み入れています。
+ハンドシェイクトランスクリプトはHelloメッセージのランダム値を組み込む
+ため、同じPSKを複数のコネクションで使う場合と同様に、同じシークレット
+を入力に使用したとしても、それぞれのハンドシェイクでは異なるトラフィッ
+クシークレットが与えられます。
+
+
+7.1. キースケジュール
+鍵の導出処理は、下記に定義するように、HKDF[RFC5869]で定義されている
+HKDF-Extract及びHKDF-Expand関数を利用します。
+
+     HKDF-Expand-Label(Secret, Label, HashValue, Length) =
+          HKDF-Expand(Secret, HkdfLabel, Length)
+
+     HkdfLabelの詳細は次のとおりです。
+
+     struct {
+         uint16 length = Length;
+         opaque label<7..255> = "tls13 " + Label;
+         opaque hash_value<0..255> = HashValue;
+     } HkdfLabel;
+
+     Derive-Secret(Secret, Label, Messages) =
+          HKDF-Expand-Label(Secret, Label,
+                            Transcript-Hash(Messages), Hash.length)
+
+Transcript-Hash及びHKDFにより使用されるハッシュ関数は暗号スイートのハ
+ッシュアルゴリズムです。Hash.lengthはバイト単位での出力長です。Messages
+はレコードレイヤーのヘッダを除いた、ハンドシェイクメッセージタイプ、
+lengthフィールドを含む、通知されたハンドシェイクメッセージを連結したも
+のです。HKDF-Expand-Labelは長さ0のハッシュ値(""が通知されたケース)を許
+可することに注意してください。
+
+注意:通常ハッシュ関数は、追加のハッシュ計算の反復処理に12文字以上の
+ラベルが必要です。この仕様のラベルはこの制限に合うように選択されます。
+
+n個のInputSecretsのセットが与えられ、最終的な"master secret"が
+InputSecret_1、InputSecret_2...を入力としてHKDF-Extractを反復して呼び
+出すことで計算されます。初期シークレットは、Hash.lengthが0バイトの文字
+列です。具体的には、TLS 1.3のシークレットは下記の順番で追加されていき
+ます。
+
+ - PSK(外部で確立された、または以前のコネクションからレジュームしたマ
+   スターシークレットから導出された事前共有鍵)
+
+ - (EC)DHEの共有シークレット(Section 7.4)
+
+以下は、フルキーの導出スケジュールをダイアグラムで示したものです。この
+ダイアグラムでは、次の規則を適用しています。
+
+ - HKDF-Extractは、Saltの引数を上部から、IKM(Input Keying Material)の
+   引数を左から取得します。
+
+ - Derive-Secretのシークレットの引数は矢印で入力されたものが通知されま
+   す。例として、Early Secretはclient_}early_traffic_secretのSecretを
+   生成するためのものです。
+
+                 0
+                 |
+                 v
+   PSK ->  HKDF-Extract = Early Secret
+                 |
+                 +-----> Derive-Secret(.,
+                 |                     "ext binder" |
+                 |                     "res binder",
+                 |                     "")
+                 |                     = binder_key
+                 |
+                 +-----> Derive-Secret(., "c e traffic",
+                 |                     ClientHello)
+                 |                     = client_early_traffic_secret
+                 |
+                 +-----> Derive-Secret(., "e exp master",
+                 |                     ClientHello)
+                 |                     = early_exporter_master_secret
+                 v
+           Derive-Secret(., "derived", "")
+                 |
+                 v
+(EC)DHE -> HKDF-Extract = Handshake Secret
+                 |
+                 +-----> Derive-Secret(., "c hs traffic",
+                 |                     ClientHello...ServerHello)
+                 |                     = client_handshake_traffic_secret
+                 |
+                 +-----> Derive-Secret(., "s hs traffic",
+                 |                     ClientHello...ServerHello)
+                 |                     = server_handshake_traffic_secret
+                 v
+           Derive-Secret(., "derived", "")
+                 |
+                 v
+      0 -> HKDF-Extract = Master Secret
+                 |
+                 +-----> Derive-Secret(., "c ap traffic",
+                 |                     ClientHello...server Finished)
+                 |                     = client_application_traffic_secret_0
+                 |
+                 +-----> Derive-Secret(., "s ap traffic",
+                 |                     ClientHello...server Finished)
+                 |                     = server_application_traffic_secret_0
+                 |
+                 +-----> Derive-Secret(., "exp master",
+                 |                     ClientHello...server Finished)
+                 |                     = exporter_master_secret
+                 |
+                 +-----> Derive-Secret(., "res master",
+                                       ClientHello...client Finished)
+                                       = resumption_master_secret
+
+この図において、ダイアグラムの左側のシークレットは、コンテキストなしの
+生のエントロピーに過ぎず、右側のシークレットはハンドシェイクコンテキス
+トを含んだものであり、追加のコンテキストなしに動作する鍵の導出に使用で
+きるものです。異なるDerive-Secretは別のメッセージを引数に取り呼び出さ
+れることに注意してください。0-RTTでは、Derive-Secretは4つのトランスク
+リプトで呼び出されます。1-RTT飲みの場合は3つのトランスクリプトになりま
+す。
+
+シークレットが与えられない場合、Hash.lengthが0バイトで構成される0値が
+使用されます。これは反復のラウンドのスキップを意味するものではないこと
+に注意してください。そのため、PSKがEarly Secretを使用しない場合、
+HKDF-Extrace(0, 0)になります。binder_sercretを計算するためのラベルは、
+外部のPSK(TLSの外部で確立されたもの)を利用する場合は"ext binder"を、PSK
+のレジューム(以前のハンドシェイクのマスターシークレットをレジュームす
+る)の場合は"res binder"を使用します。異なるラベルを使用することは、PSK
+の他のタイプと間違えることを防ぎます。
+
+Early Secretは最終的なサーバのシークレットのPSKに依存する、複数の値が
+あります。クライアントは各潜在的なPSKが演算するのに必要になります。PSK
+を利用しない場合、ゼロPSKに合ったearly secretの計算に必要になります。
+
+一度、与えられたシークレットから導出される値が計算されると、シークレッ
+トは削除されるべきです[SHOULD]。
+
 続く
 
