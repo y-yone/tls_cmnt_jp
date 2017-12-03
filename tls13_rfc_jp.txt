@@ -3394,7 +3394,7 @@ InputSecret_1、InputSecret_2...を入力としてHKDF-Extractを反復して呼
 トを含んだものであり、追加のコンテキストなしに動作する鍵の導出に使用で
 きるものです。異なるDerive-Secretは別のメッセージを引数に取り呼び出さ
 れることに注意してください。0-RTTでは、Derive-Secretは4つのトランスク
-リプトで呼び出されます。1-RTT飲みの場合は3つのトランスクリプトになりま
+リプトで呼び出されます。1-RTTのみの場合は3つのトランスクリプトになりま
 す。
 
 シークレットが与えられない場合、Hash.lengthが0バイトで構成される0値が
@@ -3412,6 +3412,57 @@ Early Secretは最終的なサーバのシークレットのPSKに依存する�
 
 一度、与えられたシークレットから導出される値が計算されると、シークレッ
 トは削除されるべきです[SHOULD]。
+
+
+7.2. トラフィックキーおよび初期ベクトル(IV)の更新
+一度ハンドシェイクが完了すると、どちら側からでもSection 4.6.3に定義し
+たKeyUpdateハンドシェイクで送信のトラフィックキーを更新することができ
+ます。生成されるトラフィックキーは、このセクションで記載する
+client_/server_application_traffic_secret_Nから生成された
+client_/server_application_traffic_secret_N+1を使ってSection 7.3のトラ
+フィックキーを再導出します。
+
+次の世代のapplication_traffic_secretは以下のように計算します。
+
+     application_traffic_secret_N+1 =
+         HKDF-Expand-Label(application_traffic_secret_N,
+                           "traffic upd", "", Hash.length)
+
+一度client_/server_application_traffic_secret_N+1と関連するトラフィッ
+クキーを計算すると、実装はclient_/server_application_traffic_secret_N
+とそれに関連するトラフィックキーを削除するべきです[SHOULD]。
+
+
+7.3. トラフィックキーの計算
+トラフィックキーマテリアルは以下の入力から生成されます。
+
+ - シークレット値
+ - 特定利用目的に合わせて生成された値
+ - キーの長さ
+
+トラフィックキーマテリアルは以下のトラフィックシークレット値から生成さ
+れます。
+
+  [sender]_write_key = HKDF-Expand-Label(Secret, "key", "", key_length)
+  [sender]_write_iv  = HKDF-Expand-Label(Secret, "iv" , "", iv_length)
+
+[sender]は送信サイドになります。Secret値は以下の表に記述した各レコード
+タイプの値になります。
+
+     +-------------------+---------------------------------------+
+     | Record Type       | Secret                                |
+     +-------------------+---------------------------------------+
+     | 0-RTT Application | client_early_traffic_secret           |
+     |                   |                                       |
+     | Handshake         | [sender]_handshake_traffic_secret     |
+     |                   |                                       |
+     | Application Data  | [sender]_application_traffic_secret_N |
+     +-------------------+---------------------------------------+
+
+すべてのトラフィックキーマテリアルは、Secretが変更するたびに再計算され
+ます(つまり、ハンドシェイクからアプリケーションデータに変わる時やキー
+の更新を行う時です)。
+
 
 続く
 
